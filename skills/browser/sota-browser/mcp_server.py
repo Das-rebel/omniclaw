@@ -573,7 +573,7 @@ class BrowserManager:
                         || el.getAttribute('placeholder')
                         || el.getAttribute('name')
                         || el.id
-                        || el.textContent?.trim().replace(/\s+/g, ' ').slice(0, 80)
+                        || el.textContent?.trim().replace(/\\s+/g, ' ').slice(0, 80)
                         || '';
                 }
 
