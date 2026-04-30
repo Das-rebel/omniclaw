@@ -153,7 +153,28 @@ class BrowserManager:
         page = self.pages[tab_id]["page"]
         
         try:
-            # Fast DOM snapshot - optimized script
+            # Get all frames including iframes
+            frames_info = await page.evaluate("""() => {
+                const frames = [];
+                function walk(win, path) {
+                    try {
+                        const doc = win.document;
+                        const tag = win.frameElement ? win.frameElement.tagName.toLowerCase() : 'window';
+                        frames.push({
+                            url: win.location.href,
+                            tag: tag,
+                            name: win.name || '',
+                            path: path,
+                            sameOrigin: win.location.origin === window.location.origin
+                        });
+                    } catch(e) { /* cross-origin, skip */ }
+                    for (const f of win.frames) walk(f, path + '>' + (f.name || 'unnamed'));
+                }
+                walk(window, 'main');
+                return frames;
+            }""")
+            
+            # Get main frame tree
             tree_script = """
             () => {
                 const tree = [], elements = {};
@@ -190,7 +211,14 @@ class BrowserManager:
             data = await page.evaluate(tree_script)
             text = "\n".join([f"{'  '*n['d']}[{n['role']}] {n['name']}" for n in data["tree"]])
             
-            result = {"url": page.url, "title": await page.title(), "tree": data["tree"], "text": text, "elements": data["elements"]}
+            result = {
+                "url": page.url, 
+                "title": await page.title(), 
+                "tree": data["tree"], 
+                "text": text, 
+                "elements": data["elements"],
+                "frames": frames_info
+            }
             
             if include_screenshot:
                 import base64
@@ -264,12 +292,149 @@ class BrowserManager:
         img = await self.pages[tab_id]["page"].screenshot(full_page=full)
         return {"base64": base64.b64encode(img).decode()}
     
-    async def evaluate(self, tab_id: str, script: str) -> dict:
+    async def evaluate(self, tab_id: str, script: str, frame_index: int = None) -> dict:
         if tab_id not in self.pages:
             return {"error": "Tab not found"}
+        
+        page = self.pages[tab_id]["page"]
         try:
-            result = await self.pages[tab_id]["page"].evaluate(script)
+            if frame_index is not None:
+                # Access specific frame
+                frames = page.frames
+                if frame_index < len(frames):
+                    frame = frames[frame_index]
+                    result = await frame.evaluate(script)
+                else:
+                    return {"error": f"Frame {frame_index} not found, total frames: {len(frames)}"}
+            else:
+                result = await page.evaluate(script)
             return {"success": True, "result": result}
+        except Exception as e:
+            return {"error": str(e)}
+    
+    async def list_frames(self, tab_id: str) -> dict:
+        """List all frames in the page with their URLs and origins"""
+        if tab_id not in self.pages:
+            return {"error": "Tab not found"}
+        
+        page = self.pages[tab_id]["page"]
+        try:
+            frames_list = []
+            for i, frame in enumerate(page.frames):
+                try:
+                    frames_list.append({
+                        "index": i,
+                        "url": frame.url,
+                        "name": frame.name or '',
+                        "is_main": frame.is_main_frame
+                    })
+                except:
+                    frames_list.append({"index": i, "url": "[cross-origin]", "name": "", "is_main": False})
+            return {"frames": frames_list, "total": len(frames_list)}
+        except Exception as e:
+            return {"error": str(e)}
+    
+    async def capture_console_logs(self, tab_id: str, clear: bool = False) -> dict:
+        """Capture browser console logs. Useful for debugging private outputs."""
+        if tab_id not in self.pages:
+            return {"error": "Tab not found"}
+        
+        page = self.pages[tab_id]["page"]
+        try:
+            # Enable console capture
+            if not hasattr(self, '_console_logs'):
+                self._console_logs = {}
+            if clear or tab_id not in self._console_logs:
+                self._console_logs[tab_id] = []
+            
+            # Inject console interceptor
+            await page.evaluate("""() => {
+                if (!window._consoleInterceptor) {
+                    window._consoleInterceptor = true;
+                    const originalLog = console.log;
+                    const originalError = console.error;
+                    window._pi_logs = [];
+                    console.log = (...args) => {
+                        window._pi_logs.push({type: 'log', msg: args.map(a => String(a)).join(' '), ts: Date.now()});
+                        originalLog.apply(console, args);
+                    };
+                    console.error = (...args) => {
+                        window._pi_logs.push({type: 'error', msg: args.map(a => String(a)).join(' '), ts: Date.now()});
+                        originalError.apply(console, args);
+                    };
+                }
+            }""")
+            
+            # Get captured logs
+            logs = await page.evaluate("window._pi_logs || []")
+            return {"logs": logs, "count": len(logs)}
+        except Exception as e:
+            return {"error": str(e)}
+    
+    async def get_frame_content(self, tab_id: str, frame_index: int = None, frame_url_contains: str = None) -> dict:
+        """Get HTML content from a specific frame. Useful for scraping iframe content."""
+        if tab_id not in self.pages:
+            return {"error": "Tab not found"}
+        
+        page = self.pages[tab_id]["page"]
+        try:
+            target_frame = None
+            
+            if frame_url_contains:
+                for frame in page.frames:
+                    if frame_url_contains in frame.url:
+                        target_frame = frame
+                        break
+            elif frame_index is not None:
+                frames = page.frames
+                if frame_index < len(frames):
+                    target_frame = frames[frame_index]
+            else:
+                return {"error": "Must specify frame_index or frame_url_contains"}
+            
+            if not target_frame:
+                return {"error": "Frame not found"}
+            
+            content = await target_frame.content()
+            return {"content": content[:50000], "url": target_frame.url, "length": len(content)}
+        except Exception as e:
+            return {"error": str(e)}
+    
+    async def inject_into_all_frames(self, tab_id: str, script: str) -> dict:
+        """Inject and execute JavaScript in ALL frames. Returns results from each frame."""
+        if tab_id not in self.pages:
+            return {"error": "Tab not found"}
+        
+        page = self.pages[tab_id]["page"]
+        results = []
+        
+        for i, frame in enumerate(page.frames):
+            try:
+                result = await frame.evaluate(script)
+                results.append({"frame_index": i, "url": frame.url, "success": True, "result": result})
+            except Exception as e:
+                results.append({"frame_index": i, "url": frame.url[:50] if frame.url else "unknown", "success": False, "error": str(e)})
+        
+        return {"results": results, "total_frames": len(results)}
+    
+    async def evaluate_in_frame(self, tab_id: str, script: str, frame_selector: str = None, frame_url_contains: str = None) -> dict:
+        """Evaluate script in a specific frame by selector or URL contains"""
+        if tab_id not in self.pages:
+            return {"error": "Tab not found"}
+        
+        page = self.pages[tab_id]["page"]
+        try:
+            target_frame = None
+            for frame in page.frames:
+                if frame_url_contains and frame_url_contains in frame.url:
+                    target_frame = frame
+                    break
+            
+            if not target_frame:
+                return {"error": f"Frame with URL containing '{frame_url_contains}' not found"}
+            
+            result = await target_frame.evaluate(script)
+            return {"success": True, "result": result, "frame_url": target_frame.url}
         except Exception as e:
             return {"error": str(e)}
     
@@ -397,7 +562,17 @@ class MCPServer:
                  "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "dx": {"type": "number"}, "dy": {"type": "number"}}, "required": ["tab_id"]}},
                 {"name": "browser_screenshot", "description": "Take screenshot",
                  "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "full": {"type": "boolean"}}, "required": ["tab_id"]}},
-                {"name": "browser_evaluate", "description": "Execute JavaScript",
+                {"name": "browser_evaluate", "description": "Execute JavaScript in main frame or specify frame_index",
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "script": {"type": "string"}, "frame_index": {"type": "integer"}}, "required": ["tab_id", "script"]}},
+                {"name": "browser_list_frames", "description": "List all frames in the page",
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}}, "required": ["tab_id"]}},
+                {"name": "browser_evaluate_in_frame", "description": "Evaluate JavaScript in a specific frame by URL contains",
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "script": {"type": "string"}, "frame_url_contains": {"type": "string"}}, "required": ["tab_id", "script", "frame_url_contains"]}},
+                {"name": "browser_capture_console", "description": "Capture browser console logs for debugging",
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "clear": {"type": "boolean"}}, "required": ["tab_id"]}},
+                {"name": "browser_get_frame_content", "description": "Get HTML content from a specific frame",
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "frame_index": {"type": "integer"}, "frame_url_contains": {"type": "string"}}, "required": ["tab_id"]}},
+                {"name": "browser_inject_all_frames", "description": "Inject and run JS in all frames, returns per-frame results",
                  "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "script": {"type": "string"}}, "required": ["tab_id", "script"]}},
                 {"name": "browser_press_key", "description": "Press key (Enter, Tab, etc.)",
                  "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "key": {"type": "string"}, "modifiers": {"type": "integer"}}, "required": ["tab_id", "key"]}},
@@ -465,7 +640,17 @@ class MCPServer:
         if name == "browser_screenshot":
             return await b.screenshot(tid, args.get("full", False))
         if name == "browser_evaluate":
-            return await b.evaluate(tid, args["script"])
+            return await b.evaluate(tid, args["script"], args.get("frame_index"))
+        if name == "browser_list_frames":
+            return await b.list_frames(tid)
+        if name == "browser_evaluate_in_frame":
+            return await b.evaluate_in_frame(tid, args["script"], args.get("frame_selector"), args.get("frame_url_contains"))
+        if name == "browser_capture_console":
+            return await b.capture_console_logs(tid, args.get("clear", False))
+        if name == "browser_get_frame_content":
+            return await b.get_frame_content(tid, args.get("frame_index"), args.get("frame_url_contains"))
+        if name == "browser_inject_all_frames":
+            return await b.inject_into_all_frames(tid, args["script"])
         if name == "browser_press_key":
             return await b.press_key(tid, args["key"], args.get("modifiers", 0))
         if name == "browser_wait":
