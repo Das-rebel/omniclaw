@@ -113,10 +113,81 @@ class CerebrasClient {
   }
 }
 
+// Anthropic Claude client for primary AI responses
+class AnthropicClient {
+  constructor(options = {}) {
+    this.apiKey = options.apiKey || process.env.ZAI_API_KEY || process.env.ANTHROPIC_API_KEY;
+    this.baseUrl = 'https://api.z.ai';
+    this.basePath = '/api/anthropic';
+    this.model = 'claude-sonnet-4-20250514';
+    this.timeout = 80000; // Cloud Functions: 80s timeout
+  }
+
+  _post(endpoint, body) {
+    return new Promise((resolve, reject) => {
+      const bodyStr = JSON.stringify(body);
+      const reqOptions = {
+        hostname: 'api.z.ai',
+        path: '/api/anthropic/messages',
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+          'Content-Length': Buffer.byteLength(bodyStr)
+        }
+      };
+
+      const req = https.request(reqOptions, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              resolve(parsed);
+            } else {
+              reject(new Error(`${res.statusCode}: ${JSON.stringify(parsed)}`));
+            }
+          } catch (e) {
+            reject(new Error(`Parse error: ${data.substring(0, 100)}`));
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.setTimeout(this.timeout, () => { req.destroy(); reject(new Error('Timeout')); });
+      req.write(bodyStr);
+      req.end();
+    });
+  }
+
+  async query(prompt) {
+    if (!this.apiKey) throw new Error('ZAI_API_KEY not configured');
+    const data = await this._post('/api/anthropic/messages', {
+      model: this.model,
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: prompt }]
+    });
+    return data.content?.[0]?.text || 'No response';
+  }
+
+  async chat(messages) {
+    if (!this.apiKey) throw new Error('ZAI_API_KEY not configured');
+    const data = await this._post('/api/anthropic/messages', {
+      model: this.model,
+      max_tokens: 1024,
+      messages: messages
+    });
+    return data.content?.[0]?.text || 'No response';
+  }
+}
+
 // Multi-provider query function
 const multiProviderQuery = createFallbackChain('query', [
   'GroqClient',
-  'CerebrasClient'
+  'CerebrasClient',
+  'AnthropicClient'
 ]);
 
 function createFallbackChain(operation, clientNames) {
@@ -138,7 +209,8 @@ When asked about your capabilities, list ALL of these. Never say you cannot do s
 
     const clients = {
       GroqClient: () => new GroqClient(),
-      CerebrasClient: () => new CerebrasClient()
+      CerebrasClient: () => new CerebrasClient(),
+      AnthropicClient: () => new AnthropicClient()
     };
 
     for (const name of clientNames) {
@@ -171,13 +243,15 @@ module.exports = {
   getClient: (name) => {
     const clients = {
       GroqClient: new GroqClient(),
-      CerebrasClient: new CerebrasClient()
+      CerebrasClient: new CerebrasClient(),
+      AnthropicClient: new AnthropicClient()
     };
     return clients[name] || { query: () => 'Client not found' };
   },
   getOriginalClients: () => ({
     GroqClient,
-    CerebrasClient
+    CerebrasClient,
+    AnthropicClient
   }),
   multiProviderQuery,
   createFallbackChain,

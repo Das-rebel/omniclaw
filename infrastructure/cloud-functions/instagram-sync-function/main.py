@@ -79,8 +79,11 @@ def _read_gcs_json(path):
             return None
         raw = blob.download_as_text()
         data = json.loads(raw)
-        if isinstance(data, str):
-            data = json.loads(data)
+        # Handle double-encoding: file contains JSON where posts field is a string
+        if isinstance(data, dict):
+            posts = data.get("posts", [])
+            if isinstance(posts, str):
+                data["posts"] = json.loads(posts)
         return data
     except Exception as e:
         log(f"Error reading {path}: {e}")
@@ -93,8 +96,15 @@ def _write_gcs_json(path, data):
         return False
     try:
         blob = bucket.blob(path)
+        # Fix: Don't double-encode posts. The GCS file should be proper JSON
+        # with posts as a JSON array, not a string-encoded JSON string.
+        write_data = data
+        if isinstance(data, dict) and isinstance(data.get("posts"), str):
+            # Already double-encoded from a previous buggy write - fix it
+            write_data = dict(data)
+            write_data["posts"] = json.loads(data["posts"])
         blob.upload_from_string(
-            json.dumps(data, indent=2),
+            json.dumps(write_data, indent=2),
             content_type="application/json",
         )
         log(f"Uploaded to GCS: {path}")
@@ -248,12 +258,10 @@ def _scrape_saved_posts(cl):
         coll_id = getattr(coll, "id", None)
         log(f"Fetching collection: {coll_name} (id={coll_id})")
         try:
-            items = cl.collection_items(coll_id)
-            for item in items:
-                media = getattr(item, "media", None)
-                if media is None:
-                    continue
-
+            # instagrapi 2.x uses collection_medias (not collection_items)
+            # It returns a list of Media objects (not a paginated iterator)
+            medias = cl.collection_medias(str(coll_id), amount=50)
+            for media in medias:
                 pk = str(getattr(media, "pk", ""))
                 if pk in seen_pks:
                     continue
@@ -268,7 +276,6 @@ def _scrape_saved_posts(cl):
                 if hasattr(media, "thumbnail_url"):
                     thumbnail = str(media.thumbnail_url) if media.thumbnail_url else ""
                 elif hasattr(media, "resources") and media.resources:
-                    # Carousel — use first item
                     first = media.resources[0]
                     if hasattr(first, "thumbnail_url"):
                         thumbnail = str(first.thumbnail_url) if first.thumbnail_url else ""
@@ -289,9 +296,9 @@ def _scrape_saved_posts(cl):
                     "synced_at": datetime.now(timezone.utc).isoformat(),
                 }
 
-                # User tags if available
                 if hasattr(media, "usertags") and hasattr(media.usertags, "users"):
                     post["usertags"] = [str(u.user.pk) for u in media.usertags.users]
+
 
                 all_posts.append(post)
 
@@ -316,6 +323,16 @@ def _merge_posts(new_posts, existing_data):
         }
 
     existing_posts = existing_data.get("posts", [])
+    # Handle double-encoded posts (stored as JSON string)
+    if isinstance(existing_posts, str):
+        try:
+            existing_posts = json.loads(existing_posts)
+        except Exception:
+            existing_posts = []
+    if not isinstance(existing_posts, list):
+        existing_posts = []
+
+
     existing_pks = {p.get("pk") or p.get("id", "") for p in existing_posts}
 
     added = 0
@@ -355,7 +372,7 @@ def _do_sync(force_refresh=False, send_summary=True):
     1. Try GCS cookies → instagrapi session
     2. Fallback to password login
     3. Fetch saved collections
-    4. Merge with existing GCS data
+    4. Merge with existing GCS data (or skip merge if force_refresh or corrupt)
     5. Upload results
     """
     if not INSTAGRAPH_AVAILABLE:
@@ -365,6 +382,7 @@ def _do_sync(force_refresh=False, send_summary=True):
             "source": "none",
             "count": 0,
         }
+
 
     cl = _create_client()
     auth_method = None
@@ -456,17 +474,51 @@ def _do_sync(force_refresh=False, send_summary=True):
 
     log(f"Fetched {len(posts)} saved posts via instagrapi")
 
+
     # --- Step 4: Merge and upload ---
-    existing = _read_gcs_json(GCS_INSTAGRAM_PATH)
-    if existing:
-        merged, added = _merge_posts(posts, existing)
-    else:
+    # Force refresh = skip merge entirely, just write fresh data
+    if force_refresh:
+        log("force_refresh=True — skipping merge, writing fresh data")
         merged = {
             "synced_at": datetime.now(timezone.utc).isoformat(),
             "count": len(posts),
             "posts": posts,
         }
         added = len(posts)
+    else:
+        # Normal merge with robust error handling for corrupt GCS data
+        existing = _read_gcs_json(GCS_INSTAGRAM_PATH)
+        if existing and isinstance(existing, dict):
+            existing_posts = existing.get("posts", [])
+            # Handle double-encoded posts (stored as JSON string instead of list)
+            if isinstance(existing_posts, str):
+                try:
+                    existing_posts = json.loads(existing_posts)
+                    log("Fixed double-encoded posts field in existing data")
+                except Exception:
+                    existing_posts = []
+                    log("Could not parse double-encoded posts — starting fresh")
+
+            if isinstance(existing_posts, list):
+                # Do merge
+                merged, added = _merge_posts(posts, existing)
+            else:
+                # existing is corrupt (posts is neither list nor parseable string) — start fresh
+                log("Existing data corrupt (posts not a list) — starting fresh")
+                merged = {
+                    "synced_at": datetime.now(timezone.utc).isoformat(),
+                    "count": len(posts),
+                    "posts": posts,
+                }
+                added = len(posts)
+        else:
+            # No existing data — start fresh
+            merged = {
+                "synced_at": datetime.now(timezone.utc).isoformat(),
+                "count": len(posts),
+                "posts": posts,
+            }
+            added = len(posts)
 
     _write_gcs_json(GCS_INSTAGRAM_PATH, merged)
 

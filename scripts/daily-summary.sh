@@ -72,14 +72,27 @@ format_age() {
     echo "MISSING"
     return
   fi
-  # Parse date string to epoch (macOS date)
+  
+  # Use python3 for cross-platform date parsing
   local file_epoch
-  file_epoch=$(date -j -u -f "%a, %d %b %Y %H:%M:%S %Z" "$iso_date" "+%s" 2>/dev/null) || {
+  file_epoch=$(python3 -c "
+from datetime import datetime
+try:
+    dt = datetime.strptime('$iso_date', '%a, %d %b %Y %H:%M:%S %Z')
+    import calendar
+    print(calendar.timegm(dt.timetuple()))
+except:
+    print(0)
+" 2>/dev/null) || file_epoch=0
+  
+  if [ "$file_epoch" = "0" ]; then
     echo "unknown"
     return
-  }
-  local now_epoch=$(date -u "+%s")
+  fi
+  
+  local now_epoch=$(python3 -c "import calendar, time; print(calendar.timegm(time.gmtime()))")
   local diff=$(( (now_epoch - file_epoch) / 86400 ))
+  
   if [ "$diff" -eq 0 ]; then
     echo "today"
   elif [ "$diff" -eq 1 ]; then
@@ -257,7 +270,7 @@ else
   echo "[$(date)] Fallback: attempting one-shot send..."
   # Try the fallback sender
   if [ -f "/Users/Subho/omniclaw/scripts/send-wa-summary.js" ]; then
-    node /Users/Subho/omniclaw/scripts/send-wa-summary.js "${TARGET_JID}" "${REPORT}" 2>&1 || true
+    /usr/local/bin/node /Users/Subho/omniclaw/scripts/send-wa-summary.js "${TARGET_JID}" "${REPORT}" 2>&1 || true
   fi
 fi
 

@@ -1,4 +1,10 @@
-# 🚀 OmniClaw-Alexa Bridge - Complete Deployment Guide
+# OmniClaw Deployment Status — May 4, 2026
+
+> **Note:** This deployment guide has been superseded by `docs/DEPLOYMENT_STATUS.md` and `docs/ARCHITECTURE_DECISIONS.md`. The canonical deployment status is now maintained in those documents.
+
+---
+
+# OmniClaw-Alexa Bridge - Complete Deployment Guide
 ## Replace QuantumClaw with OmniClaw + Configure Alexa Endpoint
 
 ---
