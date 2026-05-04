@@ -1,263 +1,291 @@
-/**
- * VL Agents - Simple Processing Agent for Scraped Data
- * Processes Twitter bookmarks and Instagram posts with AI tagging
- */
+const axios = require('axios');
+const path = require('path');
+const { spawnSync } = require('child_process');
+const { VaultDB } = require('../deploy/core/vault_db');
+const { GeminiClient } = require('./gemini_client');
 
-const fs = require('fs');
-const https = require('https');
-
-// Configuration
 const CONFIG = {
-  CEREBRAS_API_KEY: process.env.CEREBRAS_API_KEY || '',
-  GROQ_API_KEY: process.env.GROQ_API_KEY || '',
-  AI_PROVIDER: process.env.AI_PROVIDER || 'cerebras',
-  VAULT_PATH: process.env.VAULT_PATH || '/workspace/data/twitter_bookmarks_automated.json',
   AGENT_ID: process.env.AGENT_ID || '1',
   START_INDEX: parseInt(process.env.START_INDEX || '0'),
   END_INDEX: parseInt(process.env.END_INDEX || '500')
 };
 
+const db = new VaultDB();
+const gemini = new GeminiClient();
+
+const SCRIPT_DIR = __dirname;
+const OLLAMA_SCRIPT = path.join(SCRIPT_DIR, 'ollama_vision.py');
+const BLIP_SCRIPT = path.join(SCRIPT_DIR, 'blip_vision.py');
+
 /**
- * Fetch data from GCS or local file
+ * Analyze image using Ollama or BLIP fallback
  */
-async function fetchData() {
+async function analyzeWithOllama(imagePath, caption) {
+  // Ollama llava is hanging with images on this system - skip directly to BLIP
+  console.log('[' + CONFIG.AGENT_ID + '] Skipping Ollama (known image issues), using BLIP...');
+  return await tryBlipVision(imagePath, caption);
+}
+
+async function tryOllamaVision(imagePath, caption) {
   try {
-    // Try local file first (for Cloud Functions)
-    if (fs.existsSync(CONFIG.VAULT_PATH)) {
-      const data = fs.readFileSync(CONFIG.VAULT_PATH, 'utf8');
-      return JSON.parse(data);
+    const result = spawnSync('python3', [OLLAMA_SCRIPT, imagePath, caption || '', 'llava:latest'], { encoding: 'utf8', timeout: 300000 });
+    if (result.status !== 0) {
+      return { success: false, error: (result.stderr || result.stdout).substring(0, 200) };
     }
-
-    // Try GCS URL
-    if (CONFIG.VAULT_PATH.startsWith('http')) {
-      return new Promise((resolve, reject) => {
-        https.get(CONFIG.VAULT_PATH, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
-          res.on('end', () => resolve(JSON.parse(data)));
-        }).on('error', reject);
-      });
+    const parsed = JSON.parse(result.stdout);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error || 'Ollama returned failure' };
     }
-
-    return [];
-  } catch (error) {
-    console.error(`[AGENT-${CONFIG.AGENT_ID}] Error fetching data:`, error.message);
-    return [];
+    return {
+      success: true,
+      subject: parsed.subject || 'Unknown',
+      mood: parsed.mood || 'Neutral',
+      visual_tags: parsed.visual_tags || [],
+      narrative_summary: parsed.narrative_summary || '',
+      aesthetic_score: parsed.aesthetic_score || 5
+    };
+  } catch(e) {
+    return { success: false, error: e.message };
   }
 }
 
-/**
- * Process items with AI tagging
- */
+async function tryBlipVision(imagePath, caption) {
+  try {
+    const result = spawnSync('python3', [BLIP_SCRIPT, imagePath, caption || ''], { encoding: 'utf8', timeout: 180000 });
+    if (result.status !== 0) {
+      return { success: false, error: (result.stderr || result.stdout).substring(0, 200) };
+    }
+    const parsed = JSON.parse(result.stdout);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error || 'BLIP returned failure' };
+    }
+    return {
+      success: true,
+      subject: parsed.subject || 'Unknown',
+      mood: parsed.mood || 'Neutral',
+      visual_tags: parsed.visual_tags || [],
+      narrative_summary: parsed.narrative_summary || '',
+      aesthetic_score: parsed.aesthetic_score || 5
+    };
+  } catch(e) {
+    return { success: false, error: e.message };
+  }
+}
+
+async function fetchMediaFromUrl(mediaUrl, acceptHeader) {
+  try {
+    const resp = await axios.get(mediaUrl, {
+      responseType: 'arraybuffer',
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': acceptHeader || '*/*',
+        'Referer': 'https://x.com/'
+      }
+    });
+    return { data: Buffer.from(resp.data), mimeType: resp.headers['content-type'] || acceptHeader };
+  } catch(e) {
+    throw new Error('URL fetch failed: ' + e.message);
+  }
+}
+
+async function downloadInstagramMedia(url) {
+  const scriptPath = path.join(__dirname, 'instagrapi_downloader.py');
+  const result = spawnSync('python3', [scriptPath, url, '/tmp/instagram_media'], {
+    encoding: 'utf8',
+    timeout: 30000
+  });
+  
+  if (result.error) throw new Error('Process error: ' + result.error);
+  if (result.status !== 0) throw new Error('Script non-zero exit: ' + result.status);
+  
+  try {
+    const parsed = JSON.parse(result.stdout);
+    if (!parsed.success) throw new Error(parsed.error || 'Downloader failed');
+    return { data: Buffer.from(parsed.data, 'base64'), mimeType: parsed.mimeType, thumbPath: parsed.thumbPath };
+  } catch(e) {
+    throw new Error('Parse error: ' + e.message + ' stdout: ' + result.stdout);
+  }
+}
+
+async function processItem(item) {
+  const metadata = JSON.parse(item.metadata || '{}');
+  const caption = item.content || '';
+  const isTwitter = item.type === 'twitter_tweet';
+  const isInstagram = item.type === 'instagram_post';
+  const imageUrl = metadata.imageUrl;
+  const videoUrl = metadata.videoUrl;
+  let analysis;
+
+  if (isInstagram && (imageUrl || videoUrl)) {
+    const targetUrl = item.url && item.url.includes('instagram.com/p/') ? item.url : (imageUrl || videoUrl || item.url);
+    console.log(`[${CONFIG.AGENT_ID}] Instagram+scraper: ${targetUrl}`);
+    const media = await downloadInstagramMedia(targetUrl);
+    try {
+      analysis = await gemini.analyzeMediaBytes(media.data, media.mimeType, caption);
+    } catch(geminiErr) {
+      const isRetryable = geminiErr.message && (
+        geminiErr.message.includes('429') ||
+        geminiErr.message.includes('rate') ||
+        geminiErr.message.includes('503') ||
+        geminiErr.message.includes('502') ||
+        geminiErr.message.includes('500') ||
+        geminiErr.message.includes('exhausted') ||
+        geminiErr.message.includes('ECONNRESET') ||
+        geminiErr.message.includes('ECONNREFUSED') ||
+        geminiErr.message.includes('timeout')
+      );
+      if (isRetryable) {
+        console.log(`[${CONFIG.AGENT_ID}] Gemini service error, falling back to local vision...`);
+        const thumbPath = media.thumbPath || null;
+        if (!thumbPath) {
+          // Save base64 image to temp file for BLIP
+          const fs = require('fs');
+          const tmpPath = '/tmp/instagram_media/blip_fallback_' + Date.now() + '.jpg';
+          fs.writeFileSync(tmpPath, media.data);
+          analysis = await analyzeWithOllama(tmpPath, caption);
+          // Clean up temp file after analysis
+          try { fs.unlinkSync(tmpPath); } catch(e) {}
+        } else {
+          analysis = await analyzeWithOllama(thumbPath, caption);
+        }
+      } else {
+        throw geminiErr;
+      }
+    }
+  } else if (isTwitter) {
+    if (videoUrl) {
+      console.log(`[${CONFIG.AGENT_ID}] Twitter+video: ${videoUrl}`);
+      const media = await fetchMediaFromUrl(videoUrl, 'video/mp4');
+      analysis = await gemini.analyzeMediaBytes(media.data, media.mimeType, caption);
+    } else if (imageUrl) {
+      console.log(`[${CONFIG.AGENT_ID}] Twitter+image: ${imageUrl}`);
+      const media = await fetchMediaFromUrl(imageUrl, 'image/*');
+      analysis = await gemini.analyzeMediaBytes(media.data, media.mimeType, caption);
+    } else {
+      console.log(`[${CONFIG.AGENT_ID}] Twitter+text: ${item.id}`);
+      analysis = await gemini.analyzeText(caption, 'twitter');
+    }
+  } else {
+    console.log(`[${CONFIG.AGENT_ID}] Generic text-only: ${item.id}`);
+    analysis = await gemini.analyzeText(caption, item.type || 'unknown');
+  }
+
+  return {
+    id: item.id,
+    vlTags: analysis.visual_tags || [],
+    vlSubject: analysis.subject || 'Unknown',
+    vlStyle: analysis.mood || 'Neutral',
+    vlMood: analysis.mood || 'Neutral',
+    narrative: analysis.narrative_summary || '',
+    aestheticScore: analysis.aesthetic_score || 5,
+    processedBy: 'agent-' + CONFIG.AGENT_ID,
+    processedAt: new Date().toISOString()
+  };
+}
+
 async function processItems(items) {
   const agentItems = items.slice(CONFIG.START_INDEX, CONFIG.END_INDEX);
-  console.log(`[AGENT-${CONFIG.AGENT_ID}] Processing ${agentItems.length} items (${CONFIG.START_INDEX}-${CONFIG.END_INDEX})`);
-
+  console.log(`[AGENT-${CONFIG.AGENT_ID}] Processing ${agentItems.length} items...`);
   const processed = [];
 
   for (const item of agentItems) {
     try {
-      // Add basic AI tags (simplified version)
-      const processedItem = {
-        ...item,
-        vlTags: extractTags(item.text || item.caption || ''),
-        vlSubject: extractSubject(item.text || item.caption || ''),
-        vlStyle: extractStyle(item.text || item.caption || ''),
-        vlMood: extractMood(item.text || item.caption || ''),
-        processedBy: `agent-${CONFIG.AGENT_ID}`,
-        processedAt: new Date().toISOString()
+      const result = await processItem(item);
+      const existingMeta = JSON.parse(item.metadata || '{}');
+      const updatedMeta = {
+        ...existingMeta,
+        vlTags: result.vlTags,
+        vlSubject: result.vlSubject,
+        vlMood: result.vlMood,
+        narrative: result.narrative,
+        aestheticScore: result.aestheticScore
       };
-
-      processed.push(processedItem);
-      console.log(`[AGENT-${CONFIG.AGENT_ID}] Processed item ${processed.length}/${agentItems.length}`);
-
-      // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-    } catch (error) {
-      console.error(`[AGENT-${CONFIG.AGENT_ID}] Error processing item:`, error.message);
+      await db.run('UPDATE nodes SET metadata = ? WHERE id = ?', [JSON.stringify(updatedMeta), item.id]);
+      processed.push(result);
+      console.log(`[AGENT-${CONFIG.AGENT_ID}] Saved: ${result.id}`);
+    } catch(error) {
+      if (error.message && error.message.includes('exhausted')) {
+        // All providers rate-limited — wait and retry this item
+        console.log(`[AGENT-${CONFIG.AGENT_ID}] All providers rate-limited, waiting 30s...`);
+        await new Promise(r => setTimeout(r, 30000));
+        try {
+          const result = await processItem(item);
+          const existingMeta = JSON.parse(item.metadata || '{}');
+          const updatedMeta = {
+            ...existingMeta,
+            vlTags: result.vlTags,
+            vlSubject: result.vlSubject,
+            vlMood: result.vlMood,
+            narrative: result.narrative,
+            aestheticScore: result.aestheticScore
+          };
+          await db.run('UPDATE nodes SET metadata = ? WHERE id = ?', [JSON.stringify(updatedMeta), item.id]);
+          processed.push(result);
+          console.log(`[AGENT-${CONFIG.AGENT_ID}] Saved after retry: ${result.id}`);
+        } catch(retryErr) {
+          console.error(`[AGENT-${CONFIG.AGENT_ID}] Retry failed ${item.id}: ${retryErr.message}`);
+        }
+      } else {
+        console.error(`[AGENT-${CONFIG.AGENT_ID}] Failed ${item.id}: ${error.message}`);
+      }
     }
+    await new Promise(r => setTimeout(r, 1000));
   }
-
   return processed;
 }
 
-/**
- * Extract basic tags from text
- */
-function extractTags(text) {
-  if (!text) return [];
-
-  const tags = [];
-  const lowerText = text.toLowerCase();
-
-  // Tech keywords
-  const techKeywords = ['ai', 'ml', 'code', 'programming', 'javascript', 'python', 'data', 'api', 'cloud'];
-  techKeywords.forEach(keyword => {
-    if (lowerText.includes(keyword)) tags.push(keyword.toUpperCase());
-  });
-
-  // Add generic tag if no specific tags found
-  if (tags.length === 0) tags.push('GENERAL');
-
-  return tags.slice(0, 5);
-}
-
-/**
- * Extract subject from text
- */
-function extractSubject(text) {
-  if (!text) return 'General';
-
-  const subjects = {
-    'technology': ['tech', 'code', 'programming', 'software', 'app'],
-    'AI': ['ai', 'machine learning', 'ml', 'neural', 'model'],
-    'tutorial': ['how to', 'guide', 'tutorial', 'learn', 'step'],
-    'news': ['breaking', 'news', 'update', 'announcement']
-  };
-
-  const lowerText = text.toLowerCase();
-
-  for (const [subject, keywords] of Object.entries(subjects)) {
-    if (keywords.some(keyword => lowerText.includes(keyword))) {
-      return subject;
-    }
-  }
-
-  return 'General';
-}
-
-/**
- * Extract style from text
- */
-function extractStyle(text) {
-  if (!text) return 'neutral';
-
-  if (text.includes('?')) return 'question';
-  if (text.includes('!')) return 'excited';
-  if (text.includes('http') || text.includes('://')) return 'informative';
-  if (text.length > 200) return 'detailed';
-
-  return 'concise';
-}
-
-/**
- * Extract mood from text
- */
-function extractMood(text) {
-  if (!text) return 'neutral';
-
-  const lowerText = text.toLowerCase();
-
-  if (lowerText.includes('great') || lowerText.includes('awesome') || lowerText.includes('love')) {
-    return 'positive';
-  }
-  if (lowerText.includes('problem') || lowerText.includes('issue') || lowerText.includes('error')) {
-    return 'problem-solving';
-  }
-  if (lowerText.includes('new') || lowerText.includes('launch') || lowerText.includes('release')) {
-    return 'announcement';
-  }
-
-  return 'informative';
-}
-
-/**
- * Save processed data
- */
-async function saveProcessedData(processedItems) {
-  try {
-    const outputPath = `/tmp/processed_agent_${CONFIG.AGENT_ID}.json`;
-    fs.writeFileSync(outputPath, JSON.stringify(processedItems, null, 2));
-
-    // Try to upload to GCS if gsutil is available
-    const { spawn } = require('child_process');
-    const bucketPath = `gs://omniclaw-knowledge-graph/vault/processed_agent_${CONFIG.AGENT_ID}.json`;
-
-    spawn('gsutil', ['cp', outputPath, bucketPath], {
-      stdio: 'inherit',
-      env: process.env
-    });
-
-    console.log(`[AGENT-${CONFIG.AGENT_ID}] Saved ${processedItems.length} processed items`);
-
-    return {
-      success: true,
-      agentId: CONFIG.AGENT_ID,
-      processedCount: processedItems.length,
-      outputPath
-    };
-
-  } catch (error) {
-    console.error(`[AGENT-${CONFIG.AGENT_ID}] Error saving data:`, error.message);
-    return {
-      success: false,
-      agentId: CONFIG.AGENT_ID,
-      error: error.message
-    };
-  }
-}
-
-/**
- * Main handler
- */
 async function main() {
-  console.log(`[AGENT-${CONFIG.AGENT_ID}] Starting VL Agent ${CONFIG.AGENT_ID}`);
-  console.log(`[AGENT-${CONFIG.AGENT_ID}] Config:`, {
-    START_INDEX: CONFIG.START_INDEX,
-    END_INDEX: CONFIG.END_INDEX,
-    VAULT_PATH: CONFIG.VAULT_PATH
-  });
-
+  console.log(`[AGENT-${CONFIG.AGENT_ID}] VL Engine 2.0 starting...`);
   try {
-    // Fetch data
-    const data = await fetchData();
-    console.log(`[AGENT-${CONFIG.AGENT_ID}] Loaded ${data.length} total items`);
+    await db.connect();
+    // Get Twitter items first (they work without auth), then Instagram
+    const twitterNodes = await db.all(`
+      SELECT * FROM nodes 
+      WHERE type = 'twitter_tweet'
+      ORDER BY timestamp DESC 
+      LIMIT 5862
+    `);
+    const instagramNodes = await db.all(`
+      SELECT * FROM nodes 
+      WHERE type = 'instagram_post'
+      ORDER BY timestamp DESC 
+      LIMIT 99999
+    `);
+    const nodes = [...twitterNodes, ...instagramNodes];
+    const needsProcessing = nodes.filter(n => {
+      const m = JSON.parse(n.metadata || '{}');
+      return !m.vlTags || m.vlTags.length === 0;
+    });
+    const breakdown = { twitter: 0, instagram: 0 };
+    needsProcessing.forEach(n => {
+      breakdown[n.type === 'twitter_tweet' ? 'twitter' : 'instagram']++;
+    });
+    console.log(`[AGENT-${CONFIG.AGENT_ID}] Items needing analysis:`, JSON.stringify(breakdown));
 
-    if (data.length === 0) {
-      return {
-        success: true,
-        agentId: CONFIG.AGENT_ID,
-        message: 'No data to process'
-      };
-    }
-
-    // Process items
-    const processedItems = await processItems(data);
-
-    // Save results
-    const result = await saveProcessedData(processedItems);
-
-    console.log(`[AGENT-${CONFIG.AGENT_ID}] Completed:`, result);
-    return result;
-
-  } catch (error) {
-    console.error(`[AGENT-${CONFIG.AGENT_ID}] Fatal error:`, error);
-    return {
-      success: false,
-      agentId: CONFIG.AGENT_ID,
-      error: error.message
-    };
+    if (needsProcessing.length === 0) return { success: true, message: 'All processed' };
+    const processedItems = await processItems(needsProcessing);
+    return { success: true, agentId: CONFIG.AGENT_ID, processed: processedItems.length };
+  } catch(error) {
+    console.error(`[AGENT-${CONFIG.AGENT_ID}] Fatal:`, error);
+    return { success: false, error: error.message };
+  } finally {
+    await db.close();
   }
 }
 
-// Export for Cloud Function
 exports.handler = async (req, res) => {
-  const result = await main();
-  res.status(200).json(result);
+  res.status(200).json(await main());
 };
 
-// Run directly if called as script
 if (require.main === module) {
-  main()
-    .then(result => {
-      console.log('[AGENT] Result:', result);
-      process.exit(0);
-    })
-    .catch(error => {
-      console.error('[AGENT] Error:', error);
-      process.exit(1);
-    });
+  main().then(r => {
+    console.log('Result:', JSON.stringify(r));
+    process.exit(0);
+  }).catch(e => {
+    console.error(e);
+    process.exit(1);
+  });
 }
 
 module.exports = { main };

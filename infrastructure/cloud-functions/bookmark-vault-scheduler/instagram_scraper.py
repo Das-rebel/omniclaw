@@ -16,8 +16,8 @@ from instagrapi import Client
 # Configuration from environment
 INSTAGRAM_COOKIES = os.getenv("INSTAGRAM_COOKIES", "")
 INSTAGRAM_USERNAME = os.getenv("INSTAGRAM_USERNAME", "")
-VAULT_DIR = os.getenv("VAULT_DIR", "/Users/Subho/omniclaw-personal-assistant/infrastructure/data")
-INSTAGRAM_OUTPUT = os.path.join(VAULT_DIR, "instagram_scrape.json")
+VAULT_DIR = os.getenv("VAULT_DIR", "/Users/Subho/omniclaw/infrastructure/cloud-functions/deploy/learning_base")
+KG_PATH = os.path.join(VAULT_DIR, "unified_knowledge_graph.json")
 LAST_RUN_FILE = os.path.join(VAULT_DIR, "instagram_last_run.json")
 
 
@@ -104,27 +104,43 @@ async def scrape_instagram_saved_async():
 
         log(f"Found {len(unique_posts)} unique post bookmarks")
 
-        # Load existing and merge
-        existing = []
-        if Path(INSTAGRAM_OUTPUT).exists():
+        # Load existing KG
+        kg_data = {"nodes": [], "relationships": []}
+        if Path(KG_PATH).exists():
             try:
-                with open(INSTAGRAM_OUTPUT, "r") as f:
-                    existing = json.load(f)
-                log(f"Loaded {len(existing)} existing bookmarks")
+                with open(KG_PATH, "r") as f:
+                    kg_data = json.load(f)
+                log(f"Loaded {len(kg_data['nodes'])} existing KG nodes")
             except Exception as e:
-                log(f"Error loading existing: {e}")
+                log(f"Error loading KG: {e}")
 
-        existing_codes = {b.get("shortcode", "") for b in existing}
-        new_bookmarks = [p for p in unique_posts if p.get("shortcode", "") not in existing_codes]
+        existing_ids = {n.get("id", "") for n in kg_data["nodes"]}
+        new_nodes = []
+        for p in unique_posts:
+            if p["id"] not in existing_ids:
+                new_nodes.append({
+                    "id": p["id"],
+                    "type": "instagram_post",
+                    "name": "Instagram Post " + p["shortcode"],
+                    "content": "", # To be filled by VL Engine
+                    "url": p["permalink"],
+                    "metadata": {
+                        "shortcode": p["shortcode"],
+                        "collection": p["collection"],
+                        "media_type": p["media_type"],
+                        "scraped_at": p["scraped_at"]
+                    },
+                    "timestamp": p["scraped_at"]
+                })
 
-        merged = existing + new_bookmarks
+        kg_data["nodes"].extend(new_nodes)
 
-        # Save
+        # Save KG
         Path(VAULT_DIR).mkdir(parents=True, exist_ok=True)
-        with open(INSTAGRAM_OUTPUT, "w") as f:
-            json.dump(merged, f, indent=2)
+        with open(KG_PATH, "w") as f:
+            json.dump(kg_data, f, indent=2)
 
-        log(f"Added {len(new_bookmarks)} new bookmarks. Total: {len(merged)}")
+        log(f"Added {len(new_nodes)} new posts to Knowledge Graph. Total nodes: {len(kg_data['nodes'])}")
 
         # Save last run info
         with open(LAST_RUN_FILE, "w") as f:

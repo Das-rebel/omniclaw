@@ -86,4 +86,58 @@ if [ -f "$DATA_DIR/twitter_bookmarks_automated.json" ]; then
         --member="allUsers" --role="roles/storage.objectViewer" 2>&1 | tee -a "$LOG_FILE"
 fi
 
+# Merge all sources into consolidated bookmarks_automated.json
+log "Merging vault sources into bookmarks_automated.json..."
+python3 << 'PYEOF'
+import json, subprocess
+
+def gcs_load(path):
+    try:
+        raw = subprocess.check_output(['gsutil', 'cat', f'gs://omniclaw-knowledge-graph/{path}'], encoding='utf8')
+        parsed = json.loads(raw)
+        if isinstance(parsed, str):
+            parsed = json.loads(parsed)
+        return parsed
+    except:
+        return None
+
+twitter = gcs_load('vault/twitter_bookmarks_automated.json')
+instagram = gcs_load('vault/instagram_saved_automated.json')
+browser = gcs_load('vault/browser_bookmarks.json')
+
+bookmarks = []
+seen = set()
+
+for tweet in (twitter.get('bookmarks', []) if twitter else []):
+    url = tweet.get('url', '')
+    if url and url not in seen:
+        seen.add(url)
+        bookmarks.append({'type':'bookmark','title':tweet.get('vlSubject') or tweet.get('text','')[:80],'url':url,'tags':tweet.get('vlTags',[]),'added':tweet.get('synced_at','')[:10],'source':'twitter'})
+
+for post in (instagram.get('posts', []) if instagram else [])[:2000]:
+    url = post.get('permalink') or post.get('url', '')
+    if url and url not in seen:
+        seen.add(url)
+        bookmarks.append({'type':'bookmark','title':post.get('vlSubject') or post.get('caption','')[:80],'url':url,'tags':post.get('vlTags',[]),'added':(post.get('timestamp') or post.get('synced_at') or '')[:10],'source':'instagram'})
+
+for post in (browser.get('posts', []) if browser else []):
+    url = post.get('url', '')
+    if url and not url.startswith('javascript:') and url not in seen:
+        seen.add(url)
+        bookmarks.append({'type':'bookmark','title':post.get('vlSubject') or url,'url':url,'tags':post.get('vlTags',[]),'added':(post.get('dateAdded') or '')[:10],'source':f"browser_{post.get('source','unknown')}",'folder':post.get('folder')})
+
+output = {'lastUpdated': '', 'totalCount': len(bookmarks), 'sources': {'twitter': twitter.get('count',0) if twitter else 0, 'instagram': instagram.get('count',0) if instagram else 0, 'browser': len(browser.get('posts',[])) if browser else 0}, 'bookmarks': bookmarks}
+output['lastUpdated'] = subprocess.check_output(['date', '-u', '+%Y-%m-%dT%H:%M:%SZ'], encoding='utf8').strip()
+
+with open('/tmp/bookmarks_automated_merged.json', 'w') as f:
+    json.dump(output, f, indent=2)
+print(f'Merged {len(bookmarks)} bookmarks')
+PYEOF
+
+if [ -f /tmp/bookmarks_automated_merged.json ]; then
+    gcloud storage cp /tmp/bookmarks_automated_merged.json "gs://$GCS_BUCKET/vault/bookmarks_automated.json" 2>&1 | tee -a "$LOG_FILE"
+    gcloud storage objects add-iam-policy-binding "gs://$GCS_BUCKET/vault/bookmarks_automated.json" --member="allUsers" --role="roles/storage.objectViewer" 2>&1 | tee -a "$LOG_FILE" || true
+    log "Merged bookmarks_automated.json uploaded"
+fi
+
 log "=== Vault Sync Completed ==="
