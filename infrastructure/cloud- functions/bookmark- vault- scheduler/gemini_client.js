@@ -1,0 +1,34 @@
+const axios = require('axios');
+class GeminiClient {
+  constructor() { 
+    this.apiKey = process.env.GOOGLE_API_KEY; 
+    this.endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'; 
+  }
+  async analyzeMediaBytes(data, mimeType, caption = '') {
+    if (!this.apiKey) throw new Error('GOOGLE_API_KEY missing'); 
+    const prompt = 'You are a Visual Content Auditor. Analyze media: "' + caption.substring(0, 200) + '". Return JSON: {subject, mood, visual_tags, narrative_summary, aesthetic_score}. Return ONLY valid JSON.'; 
+    try { 
+      const resp = await axios.post(this.endpoint + '?key=' + this.apiKey, { 
+        contents:[{parts:[{text:prompt},{inline_data:{mime_type:mimeType, data:data.toString('base64')}}]}], 
+        generationConfig:{response_mime_type:'application/json'} 
+      }); 
+      return JSON.parse(resp.data.candidates[0].content.parts[0].text); 
+    } catch(e) { 
+      console.error('[Gemini] Failed:', e.message); throw e; 
+    } 
+  }
+  async analyzeText(text, platform = 'twitter') {
+    if (!this.apiKey) throw new Error('GOOGLE_API_KEY missing'); 
+    const prompt = 'You are a Visual Content Auditor. Analyze this '+platform+' post: "' + text.replace(/"/g,'\\"').substring(0, 500) + '". Return JSON: {subject, mood, visual_tags (3-5), narrative_summary, aesthetic_score (1-10)}. Return only JSON.'; 
+    try { 
+      const resp = await axios.post(this.endpoint + '?key=' + this.apiKey, { 
+        contents:[{parts:[{text:prompt}]}], 
+        generationConfig:{response_mime_type:'application/json'} 
+      }); 
+      return JSON.parse(resp.data.candidates[0].content.parts[0].text); 
+    } catch(e) { 
+      console.error('[Gemini] Failed:', e.message); throw e; 
+    } 
+  }
+}
+module.exports = { GeminiClient };

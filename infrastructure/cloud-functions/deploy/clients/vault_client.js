@@ -25,8 +25,6 @@ class VaultClient {
   constructor(options = {}) {
     this.knowledgeGraphPath = options.knowledgeGraphPath ||
       path.join(__dirname, '../learning_base/unified_knowledge_graph.json');
-    this.vaultPath = options.vaultPath ||
-      path.join(__dirname, '../learning_base/instagram_scrape.json');
     this.cache = new Map();
     this.cacheExpiry = 10 * 60 * 1000; // 10 minutes
     this.initialized = false;
@@ -87,8 +85,6 @@ class VaultClient {
    */
   async syncFromGCS() {
     try {
-      // Sync vault posts from GCS
-      await this.downloadFromGCS(GCS_VAULT_PATH, this.vaultPath);
       // Sync knowledge graph from GCS
       await this.downloadFromGCS(GCS_KG_PATH, this.knowledgeGraphPath);
       // Clear cache to force reload
@@ -142,31 +138,34 @@ class VaultClient {
    * Non-blocking: triggers background sync on first call
    */
   loadVaultPosts() {
-    // Trigger background sync from GCS if not yet done
-    if (!this.initialized) {
-      this.initialized = true;
-      // Fire and forget - next call will have fresh data
-      this.syncFromGCS().catch(e => console.error('[VaultClient] Background sync error:', e.message));
-    }
+    const kg = this.loadKnowledgeGraph();
+    if (!kg) return [];
 
-    const cacheKey = 'vault_posts';
-    const cached = this.cache.get(cacheKey);
-
-    if (cached && Date.now() - cached.timestamp < this.cacheExpiry) {
-      return cached.data;
-    }
-
-    try {
-      if (fs.existsSync(this.vaultPath)) {
-        const data = JSON.parse(fs.readFileSync(this.vaultPath, 'utf8'));
-        this.cache.set(cacheKey, { data, timestamp: Date.now() });
-        return data;
+    return (kg.nodes || []).filter(node => 
+      node.type === 'instagram_post' || node.type === 'twitter_tweet'
+    ).map(node => {
+      // Normalize to the post format expected by other tools
+      if (node.type === 'instagram_post') {
+        return {
+          id: node.id,
+          vlSubject: node.name,
+          vlTags: node.metadata?.vlTags || [],
+          caption: node.content,
+          permalink: node.url,
+          source: 'instagram',
+          ...node.metadata
+        };
+      } else {
+        return {
+          id: node.id,
+          vlSubject: node.name,
+          vlTags: (node.metadata ? node.metadata.topics : []) || [],
+          caption: node.content || node.name,
+          permalink: node.url,
+          source: 'twitter'
+        };
       }
-    } catch (error) {
-      console.error('[VaultClient] Error loading vault:', error.message);
-    }
-
-    return [];
+    });
   }
 
   /**
@@ -186,7 +185,7 @@ class VaultClient {
       vaultPosts: []
     };
 
-    // Search nodes in knowledge graph
+    // Search knowledge graph nodes
     for (const node of (kg.nodes || [])) {
       const nameLower = node.name.toLowerCase();
       const contentLower = (node.content || '').toLowerCase();
@@ -199,16 +198,16 @@ class VaultClient {
         else if (typeLower === 'skill') results.skills.push(node);
         else if (typeLower === 'place') results.places.push(node);
         else if (typeLower === 'food' || typeLower === 'cuisine') results.food.push(node);
-        else if (typeLower === 'twitter_tweet') {
-          // Limit twitter tweets to prevent memory issues
+        else if (typeLower === 'twitter_tweet' || typeLower === 'instagram_post') {
+          // Limit posts to prevent memory issues
           if (results.vaultPosts.length < 100) {
             results.vaultPosts.push({
               id: node.id,
               vlSubject: node.name,
-              vlTags: (node.metadata ? node.metadata.topics : []) || [],
+              vlTags: (node.metadata ? node.metadata.topics || node.metadata.vlTags : []) || [],
               caption: node.content || node.name,
               url: node.url,
-              source: node.platform || 'twitter',
+              source: node.type === 'twitter_tweet' ? 'twitter' : 'instagram',
               timestamp: node.timestamp || node.createdAt || '',
               author: node.author || ''
             });
@@ -226,36 +225,7 @@ class VaultClient {
       }
     }
 
-    // Also search vault posts (Instagram scraped content) - MERGE with existing results
-    const vaultPosts = this.loadVaultPosts();
-    if (Array.isArray(vaultPosts)) {
-      const matchedPosts = vaultPosts.filter(post => {
-        const searchText = [
-          post.vlSubject || '',
-          post.vlTags ? post.vlTags.join(' ') : '',
-          post.caption || '',
-          post.permalink || ''
-        ].join(' ').toLowerCase();
-        return searchText.includes(queryLower);
-      }).slice(0, 10); // Limit Instagram results to 10
-
-      // Merge Instagram results with existing vaultPosts
-      matchedPosts.forEach(p => {
-        if (results.vaultPosts.length < 100) {
-          results.vaultPosts.push({
-            id: p.id,
-            vlSubject: p.vlSubject,
-            vlTags: p.vlTags,
-            caption: p.caption ? p.caption.substring(0, 100) : '',
-            url: p.permalink,
-            source: 'instagram'
-          });
-        }
-      });
-    }
-    
-    console.log('[VaultClient] findKnowledge: total posts:', results.vaultPosts.length);
-
+    // Removed redundant Instagram-only file search as it's now in the KG
     return results;
   }
 

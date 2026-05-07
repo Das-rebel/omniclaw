@@ -1,0 +1,14 @@
+{
+  "name": "doc-grill",
+  "version": "1.0.0",
+  "description": "OmniClaw Doc-Grill — Grill-Me sessions for Google Docs, PDFs, and MD files",
+  "main": "index.js",
+  "scripts": {
+    "start": "node ../index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2"
+  }
+}

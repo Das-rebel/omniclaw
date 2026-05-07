@@ -187,7 +187,7 @@ async def scrape_twitter_bookmarks_async():
         bookmarks_data = []
 
         # twscrape Bookmark fetcher
-        async for tweet in api.bookmark():
+        async for tweet in api.bookmarks(limit=500):
             tweet_dict = {
                 "id": str(tweet.id),
                 "tweet_id": str(tweet.id),

@@ -4,10 +4,20 @@
 
 set -e
 
-SCRIPT_DIR="/home/ubuntu/vault_scraper"
-DATA_DIR="/home/ubuntu/vault_data"
+# Environment detection: skip GCP-specific operations on non-VM platforms
+if [ -d "/home/ubuntu/vault_scraper" ]; then
+    SCRIPT_DIR="/home/ubuntu/vault_scraper"
+    DATA_DIR="/home/ubuntu/vault_data"
+    LOG_FILE="/home/ubuntu/vault_scraper/sync.log"
+else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: /home/ubuntu/vault_scraper not found - running in degraded mode (GCS-only)"
+    SCRIPT_DIR="$(dirname "$0")"
+    DATA_DIR="/tmp/vault_data"
+    LOG_FILE="/tmp/vault_sync.log"
+    mkdir -p "$DATA_DIR"
+fi
+
 GCS_BUCKET="omniclaw-knowledge-graph"
-LOG_FILE="/home/ubuntu/vault_scraper/sync.log"
 SA_KEY="/tmp/vm-sa-key.json"
 REGION="asia-south1"
 PROJECT="omniclaw-personal-assistant"

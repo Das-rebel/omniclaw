@@ -255,7 +255,10 @@ async function main() {
     const nodes = [...twitterNodes, ...instagramNodes];
     const needsProcessing = nodes.filter(n => {
       const m = JSON.parse(n.metadata || '{}');
-      return !m.vlTags || m.vlTags.length === 0;
+      // Instagram posts have vlTags from scraper but we need vlSubject (our new field)
+      // Twitter posts are text-only and all processed
+      // So we check for vlSubject specifically
+      return !m.vlSubject;
     });
     const breakdown = { twitter: 0, instagram: 0 };
     needsProcessing.forEach(n => {

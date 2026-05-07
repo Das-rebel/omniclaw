@@ -63,6 +63,8 @@ python3 -m uvicorn src.server:app --host 0.0.0.0 --port 9377
 
 ## Available Tools
 
+### Core Browser Tools (27)
+
 | Tool | Description |
 |------|-------------|
 | `browser_create_session` | Create isolated browser session |
@@ -73,13 +75,57 @@ python3 -m uvicorn src.server:app --host 0.0.0.0 --port 9377
 | `browser_type` | Type text into element |
 | `browser_scroll` | Scroll page |
 | `browser_screenshot` | Take screenshot |
-| `browser_evaluate` | Execute JavaScript |
+| `browser_evaluate` | Execute JavaScript (supports frame_index) |
+| `browser_list_frames` | List all frames/IFrames |
+| `browser_evaluate_in_frame` | Execute JS in specific frame |
+| `browser_get_console_logs` | Capture console messages |
+| `browser_get_frame_content` | Get HTML from specific frame |
+| `browser_inject_all_frames` | Run JS in ALL frames |
+| `browser_press_key` | Press key (Enter, Tab, etc.) |
+| `browser_wait` | Explicit wait |
+| `browser_extract_images` | Extract images from page |
 | `browser_list_tabs` | List open tabs |
 | `browser_close_tab` | Close tab |
+| `browser_http_get` | Direct HTTP GET (no browser) |
 | `browser_import_cookies` | Import cookies for auth |
+| `browser_info` | Get browser info |
 | `browser_close_session` | Close session and all tabs |
-| `browser_fetch` | Fetch URL with Scrapling |
-| `browser_extract` | Extract structured data |
+| `browser_get_state` | Get indexed clickable elements |
+| `browser_get_html` | Get raw HTML of page/element |
+| `browser_go_back` | Navigate back in history |
+| `browser_switch_tab` | Switch to tab by index |
+
+### Form Engine Tools (6)
+
+| Tool | Description |
+|------|-------------|
+| `browser_parse_resume` | Parse plain-text resume into structured profile (name, email, phone, education, experience, skills, etc.) |
+| `browser_analyze_form` | Analyze page form structure — detects Google Forms, standard HTML, Material UI, Ant Design, Bootstrap. Returns field types, labels, options, required status, navigation buttons |
+| `browser_fill_form` | Fill form fields using structured profile data. Auto-analyzes form, matches fields to profile keys, fills text/select/radio/checkbox/date/file fields |
+| `browser_fill_form_from_resume` | One-shot: parse resume text + fill form. Pass raw resume, it extracts profile and auto-fills all matching fields |
+| `browser_fill_form_page` | Fill current page of multi-page form and click Next (for Google Forms multi-section) |
+| `browser_submit_form` | Auto-detect and click the Submit button |
+
+### Supported Form Types
+
+- **Google Forms** — Material Design widgets, radio groups, checkboxes, dropdowns, linear scales, date pickers, multi-page sections
+- **Standard HTML forms** — `<input>`, `<textarea>`, `<select>`, radio/checkbox groups
+- **Material UI (MUI)** — `.MuiInputBase-root`, `.MuiSelect-root`, `.MuiFormControl-root`
+- **Ant Design** — `.ant-input`, `.ant-select`, `.ant-form-item`
+- **Bootstrap** — `.form-control`, `.form-select`, `.form-floating`
+- **Generic SPA** — Label proximity heuristics, `role` attributes, `aria-label`, `contenteditable`
+
+### Profile Fields Recognized (50+ semantic types)
+
+**Personal:** first_name, last_name, full_name, middle_name, preferred_name, email, email_confirm, phone, phone_type
+**Location:** address, city, state, zip, postal_code, country
+**Web:** linkedin, github, portfolio, website, twitter
+**Education:** school, university, highest_degree, graduation_date, gpa
+**Experience:** current_company, current_title, start_date, end_date
+**Skills:** skills, languages, certifications
+**EEO:** gender, pronouns, veteran, disability, ethnicity, hispanic
+**Work Auth:** work_authorization, visa_status, sponsorship_required
+**Other:** salary, referral_source, referred_by, birthday, cover_letter, resume (file upload)
 
 ## Environment Variables
 

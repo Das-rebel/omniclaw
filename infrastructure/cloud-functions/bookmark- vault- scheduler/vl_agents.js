@@ -1,0 +1,107 @@
+const axios = require('axios');
+const path = require('path');
+const { spawnSync } = require('child_process');
+const { VaultDB } = require('../deploy/core/vault_db');
+const { GeminiClient } = require('./gemini_client');
+const CONFIG = {
+  AGENT_ID: process.env.AGENT_ID || '1',
+  START_INDEX: parseInt(process.env.START_INDEX || '0'),
+  END_INDEX: parseInt(process.env.END_INDEX || '500')
+};
+const db = new VaultDB();
+const gemini = new GeminiClient();
+async function fetchMediaFromUrl(mediaUrl, acceptHeader) {
+  try {
+    const resp = await axios.get(mediaUrl, {
+      responseType: 'arraybuffer', timeout: 15000,
+      headers: { 'User-Agent': 'Mozilla/5.0', Accept: acceptHeader || '*/*', Referer: 'https://x.com/' }
+    });
+    return { data: Buffer.from(resp.data), mimeType: resp.headers['content-type'] || acceptHeader };
+  } catch(e) { throw new Error('URL fetch failed: ' + e.message); }
+}
+async function downloadInstagramMedia(url) {
+  const username = process.env.INSTAGRAM_USERNAME || 'sdas22';
+  const cookies = process.env.INSTAGRAM_COOKIES || '';
+  const result = spawnSync('python3', [
+    path.join(__dirname, 'media_downloader.py'), url, username, cookies
+  ], { encoding: 'utf8', env: { ...process.env, INSTAGRAM_COOKIES: cookies } });
+  if (result.error) throw new Error('Process error: ' + result.error);
+  try {
+    const parsed = JSON.parse(result.stdout);
+    if (!parsed.success) throw new Error(parsed.error || 'Downloader failed');
+    return { data: Buffer.from(parsed.data, 'base64'), mimeType: parsed.mimeType };
+  } catch(e) { throw new Error('Parse error: ' + e.message); }
+}
+async function processItem(item) {
+  const metadata = JSON.parse(item.metadata || '{}');
+  const caption = item.content || '';
+  const isTwitter = item.type === 'twitter_tweet';
+  const isInstagram = item.type === 'instagram_post';
+  const imageUrl = metadata.imageUrl;
+  const videoUrl = metadata.videoUrl;
+  let analysis;
+  if (isInstagram && (imageUrl || videoUrl)) {
+    const targetUrl = imageUrl || videoUrl || item.url;
+    console.log(`[${CONFIG.AGENT_ID}] Instagram+scraper: ${targetUrl}`);
+    const media = await downloadInstagramMedia(targetUrl);
+    analysis = await gemini.analyzeMediaBytes(media.data, media.mimeType, caption);
+  } else if (isTwitter) {
+    if (videoUrl) {
+      console.log(`[${CONFIG.AGENT_ID}] Twitter+video: ${videoUrl}`);
+      const media = await fetchMediaFromUrl(videoUrl, 'video/mp4');
+      analysis = await gemini.analyzeMediaBytes(media.data, media.mimeType, caption);
+    } else if (imageUrl) {
+      console.log(`[${CONFIG.AGENT_ID}] Twitter+image: ${imageUrl}`);
+      const media = await fetchMediaFromUrl(imageUrl, 'image/*');
+      analysis = await gemini.analyzeMediaBytes(media.data, media.mimeType, caption);
+    } else {
+      console.log(`[${CONFIG.AGENT_ID}] Twitter+text: ${item.id}`);
+      analysis = await gemini.analyzeText(caption, 'twitter');
+    }
+  } else {
+    console.log(`[${CONFIG.AGENT_ID}] Text-only: ${item.id}`);
+    analysis = await gemini.analyzeText(caption, item.type);
+  }
+  return {
+    id: item.id, vlTags: analysis.visual_tags || [], vlSubject: analysis.subject || 'Unknown',
+    vlMood: analysis.mood || 'Neutral', narrative: analysis.narrative_summary || '',
+    aestheticScore: analysis.aesthetic_score || 5, processedBy: 'agent-' + CONFIG.AGENT_ID,
+    processedAt: new Date().toISOString()
+  };
+}
+async function processItems(items) {
+  const agentItems = items.slice(CONFIG.START_INDEX, CONFIG.END_INDEX);
+  console.log(`[AGENT-${CONFIG.AGENT_ID}] Processing ${agentItems.length} items...`);
+  const processed = [];
+  for (const item of agentItems) {
+    try {
+      const result = await processItem(item);
+      const existingMeta = JSON.parse(item.metadata || '{}');
+      const updatedMeta = { ...existingMeta, vlTags: result.vlTags, vlSubject: result.vlSubject,
+        vlMood: result.vlMood, narrative: result.narrative, aestheticScore: result.aestheticScore };
+      await db.run('UPDATE nodes SET metadata = ? WHERE id = ?', [JSON.stringify(updatedMeta), item.id]);
+      processed.push(result);
+      console.log(`[AGENT-${CONFIG.AGENT_ID}] Saved: ${result.id}`);
+    } catch(error) { console.error(`[AGENT-${CONFIG.AGENT_ID}] Failed ${item.id}: ${error.message}`); }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return processed;
+}
+async function main() {
+  console.log(`[AGENT-${CONFIG.AGENT_ID}] VL Engine 2.0 starting...`);
+  try {
+    await db.connect();
+    const nodes = await db.all(`SELECT * FROM nodes WHERE type IN ('twitter_tweet','instagram_post') ORDER BY timestamp DESC LIMIT 100`);
+    const needsProcessing = nodes.filter( n => { const m = JSON.parse(n.metadata || '{}'); return !m.vlTags || m.vlTags.length === 0; });
+    const breakdown = { twitter: 0, instagram: 0 };
+    needsProcessing.forEach(n => { breakdown[n.type === 'twitter_tweet' ? 'twitter' : 'instagram']++; });
+    console.log(`[AGENT-${CONFIG.AGENT_ID}] Items needing analysis:`, JSON.stringify(breakdown));
+    if (needsProcessing.length === 0) return { success: true, message: 'All processed' };
+    const processedItems = await processItems(needsProcessing);
+    return { success: true, agentId: CONFIG.AGENT_ID, processed: processedItems.length };
+  } catch(error) { console.error(`[AGENT-${CONFIG.AGENT_ID}] Fatal:`, error); return { success: false, error: error.message }; }
+  finally { await db.close(); }
+}
+exports.handler = async (req, res) => { res.status(200).json(await main()); };
+if (require.main === module) { main().then( r => { console.log('Result:', JSON.stringify(r)); process.exit(0); }).catch(e => { console.error(e); process.exit(1); }); }
+module.exports = { main };

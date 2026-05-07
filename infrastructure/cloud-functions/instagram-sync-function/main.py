@@ -222,6 +222,69 @@ def _load_cookies_gcs():
 # Core scraping
 # ---------------------------------------------------------------------------
 
+def _fetch_collection_with_retry(cl, coll_id, coll_name, initial_amount=10000):
+    """
+    Fetch medias from a collection with retry logic.
+    On 572 server error, retry with smaller chunks to avoid rate limits.
+    Returns list of Media objects.
+    """
+    import time
+    
+    # Chunk sizes to try, descending
+    chunk_sizes = [500, 200, 100, 50, 25, 10]
+    last_media_pk = 0
+    all_medias = []
+    errors_572 = 0
+    
+    for chunk_size in chunk_sizes:
+        try:
+            remaining = initial_amount - len(all_medias)
+            if remaining <= 0:
+                break
+            
+            amount = min(chunk_size, remaining)
+            if last_media_pk:
+                medias = cl.collection_medias(str(coll_id), amount=amount, last_media_pk=last_media_pk)
+            else:
+                medias = cl.collection_medias(str(coll_id), amount=amount)
+            
+            if not medias:
+                break
+            
+            all_medias.extend(medias)
+            last_media_pk = int(medias[-1].pk)
+            errors_572 = 0
+            
+            # If we got a full chunk, try for more (unless this is the last chunk_size tier)
+            if len(medias) >= chunk_size and chunk_size < 500:
+                # Keep fetching with this chunk_size
+                continue
+            elif len(medias) >= chunk_size and chunk_size == 500:
+                # Got full 500, continue with same strategy
+                continue
+            else:
+                # Got less than chunk_size → end of collection
+                break
+                
+        except Exception as e:
+            err_str = str(e)
+            if "572" in err_str or "Server Error" in err_str:
+                errors_572 += 1
+                log(f"  572 error for collection '{coll_name}' (attempt {errors_572}, chunk={chunk_size}): {err_str[:80]}")
+                if errors_572 >= 3:
+                    log(f"  Too many 572 errors for '{coll_name}', stopping fetch")
+                    break
+                time.sleep(errors_572 * 2)  # backoff
+                # Try smaller chunks on next iteration
+                continue
+            else:
+                # Non-572 error → re-raise
+                raise
+    
+    log(f"  → Fetched {len(all_medias)} posts from collection '{coll_name}' (chunk_size loop done)")
+    return all_medias
+
+
 def _scrape_saved_posts(cl):
     """
     Fetch all saved-post collections via instagrapi.
@@ -244,7 +307,7 @@ def _scrape_saved_posts(cl):
             cl.user_info(cl.user_id)
             log("No collections found (session valid, account has no saved posts)")
         except Exception:
-            log("No collections AND session dead — cookies expired")
+            log("No collections found AND session dead — cookies expired")
             raise RuntimeError("LoginRequired: session expired during collections fetch")
         return []
 
@@ -260,7 +323,8 @@ def _scrape_saved_posts(cl):
         try:
             # instagrapi 2.x uses collection_medias (not collection_items)
             # It returns a list of Media objects (not a paginated iterator)
-            medias = cl.collection_medias(str(coll_id), amount=50)
+            # Use retry logic to handle 572 server errors on large collections
+            medias = _fetch_collection_with_retry(cl, coll_id, coll_name, initial_amount=10000)
             for media in medias:
                 pk = str(getattr(media, "pk", ""))
                 if pk in seen_pks:

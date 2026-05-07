@@ -114,9 +114,9 @@ async def scrape_instagram_bookmarks_async():
                 "cookies": gcs_cookies,
                 "username": INSTAGRAM_USERNAME
             })
-            # Verify session is still valid
-            cl.user_info_by_username_v1(cl.username)
-            log("GCS cookies are valid")
+            # Verify by trying to fetch collections (works without full user context)
+            test = cl.collections()
+            log(f"GCS cookies are valid (found {len(test)} collections)")
             use_cookies = True
         except Exception as e:
             log(f"GCS cookies invalid ({e}), trying alternatives...")
@@ -131,9 +131,9 @@ async def scrape_instagram_bookmarks_async():
                     "cookies": cookies,
                     "username": INSTAGRAM_USERNAME
                 })
-                # Verify session is still valid
-                cl.user_info_by_username_v1(cl.username)
-                log("Env cookies are valid")
+                # Verify by trying to fetch collections
+                test = cl.collections()
+                log(f"Env cookies are valid (found {len(test)} collections)")
                 use_cookies = True
             except Exception as e:
                 log(f"Env cookies expired ({e}), trying password login...")
@@ -168,26 +168,20 @@ async def scrape_instagram_bookmarks_async():
         for collection in collections:
             log(f"Fetching collection: {collection.name}")
             try:
-                collection_items = cl.collection_items(collection.id)
+                collection_items = cl.collection_medias(collection.id, amount=200)
                 for item in collection_items:
-                    if item.media:
-                        post_data = {
-                            "pk": str(item.media.pk),
-                            "id": str(item.media.pk),
-                            "caption": item.media.caption_text if hasattr(item.media, 'caption_text') else "",
-                            "media_type": item.media.media_type,
-                            "thumbnail_url": item.media.thumbnail_url if hasattr(item.media, 'thumbnail_url') else "",
-                            "url": f"https://www.instagram.com/p/{item.media.code}/" if hasattr(item.media, 'code') else "",
-                            "timestamp": datetime.now().isoformat(),
-                            "like_count": item.media.like_count if hasattr(item.media, 'like_count') else 0,
-                            "comment_count": item.media.comment_count if hasattr(item.media, 'comment_count') else 0
-                        }
-
-                        # Add VL tags if available
-                        if hasattr(item.media, 'usertags'):
-                            post_data['usertags'] = [str(user.user.pk) for user in item.media.usertags.users]
-
-                        all_posts.append(post_data)
+                    post_data = {
+                        "pk": str(item.pk),
+                        "id": str(item.pk),
+                        "caption": item.caption_text if hasattr(item, 'caption_text') and item.caption_text else "",
+                        "media_type": item.media_type if hasattr(item, 'media_type') else 0,
+                        "thumbnail_url": item.thumbnail_url if hasattr(item, 'thumbnail_url') else "",
+                        "url": f"https://www.instagram.com/p/{item.code}/" if hasattr(item, 'code') and item.code else "",
+                        "timestamp": datetime.now().isoformat(),
+                        "like_count": item.like_count if hasattr(item, 'like_count') else 0,
+                        "comment_count": item.comment_count if hasattr(item, 'comment_count') else 0
+                    }
+                    all_posts.append(post_data)
 
             except Exception as e:
                 log(f"Error fetching collection {collection.name}: {e}")
@@ -227,6 +221,9 @@ async def scrape_instagram_bookmarks_async():
 def scrape_instagram_bookmarks():
     """Sync wrapper for async function"""
     return asyncio.run(scrape_instagram_bookmarks_async())
+
+# Alias for compatibility with main.py import
+scrape_instagram_saved = scrape_instagram_bookmarks
 
 if __name__ == "__main__":
     result = scrape_instagram_bookmarks()

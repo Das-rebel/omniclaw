@@ -22,8 +22,17 @@
   var toast = document.getElementById('toast');
 
   // Init
+  // Hide loading overlay immediately on page load
+  var loadingOverlay = document.getElementById('loading-overlay');
+  if (loadingOverlay) {
+    loadingOverlay.style.display = 'none';
+  }
+
   if (password) {
     showDashboard();
+  } else {
+    // Show login screen, ensure loading overlay is hidden
+    if (loadingOverlay) loadingOverlay.style.display = 'none';
   }
 
   // Auth
@@ -248,7 +257,34 @@
         return;
       }
       container.innerHTML = data.data.slice(0, 5).map(function(item) {
-        return '<div class="browse-item"><pre>' + JSON.stringify(item, null, 2) + '</pre></div>';
+        var text = item.text || item.caption || item.description || item.title || '';
+        var author = item.author || item.author_name || item.user?.username || (item.authorHandle ? '@' + item.authorHandle.replace('https://x.com/', '').replace('http://x.com/', '') : '');
+        var time = item.created_at || item.timestamp || item.date || '';
+        var url = item.url || item.permalink || item.link || item.uri || '';
+        var id = item.id || item.shortcode || '';
+        var retweets = item.retweet_count || item.retweets || 0;
+        var likes = item.like_count || item.likes || item.favorite_count || 0;
+        var replies = item.reply_count || 0;
+
+        // Convert timestamps to nice format
+        if (time && typeof time === 'string' && time.length > 20) {
+          try { time = new Date(time).toLocaleString(); } catch(e) {}
+        }
+
+        // Auto-link URLs in text (clickable)
+        var linkedText = text.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" class="tweet-link">$1</a>');
+        // Also link bare x.com/twitter links
+        linkedText = linkedText.replace(/(x\.com\/[^\s<]+)/g, '<a href="https://$1" target="_blank" rel="noopener" class="tweet-link">https://$1</a>');
+
+        return '<div class="browse-item tweet-card"><div class="tweet-header">' +
+          (author ? '<span class="tweet-author">' + escapeHtml(author) + '</span>' : '') +
+          (time ? '<span class="tweet-time">' + time + '</span>' : '') +
+        '</div><div class="tweet-text">' + linkedText + '</div><div class="tweet-footer">' +
+          '<span class="tweet-stat">↩ ' + replies + '</span>' +
+          '<span class="tweet-stat">♺ ' + retweets + '</span>' +
+          '<span class="tweet-stat">♥ ' + likes + '</span>' +
+          (url ? '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener" class="tweet-url">Open Tweet ↗</a>' : '') +
+        '</div></div>';
       }).join('');
       renderPagination();
     }).catch(function(e) {
@@ -385,15 +421,37 @@
       }
       window.lastSearchResults = res.results;
       container.innerHTML = res.results.map(function(r, i) {
-        var snippet = r.text.substring(0, 120).replace(/\n/g, ' ');
-        return '<div class="search-result-item" data-index="' + i + '">' +
-          '<div class="search-result-header">' +
-            '<span class="search-result-source ' + r.source + '">' + r.source + '</span>' +
-            '<span class="search-result-author">' + escapeHtml(r.author) + '</span>' +
+        var text = r.text || '';
+        var author = r.author || '';
+        var time = r.created_at || r.timestamp || '';
+        var url = r.url || '';
+        var retweets = r.retweet_count || r.retweets || 0;
+        var likes = r.like_count || r.likes || r.favorite_count || 0;
+        var replies = r.reply_count || 0;
+
+        // Convert timestamps
+        if (time && typeof time === 'string' && time.length > 20) {
+          try { time = new Date(time).toLocaleString(); } catch(e) {}
+        }
+
+        // Auto-link URLs in text (clickable)
+        var linkedText = text.substring(0, 280).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        linkedText = linkedText.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" class="tweet-link">$1</a>');
+        linkedText = linkedText.replace(/(x\.com\/[^\s<]+)/g, '<a href="https://$1" target="_blank" rel="noopener" class="tweet-link">https://$1</a>');
+        if (text.length > 280) linkedText += '…';
+
+        return '<div class="browse-item tweet-card" data-index="' + i + '">' +
+          '<div class="tweet-header">' +
+            '<span class="tweet-author">' + escapeHtml(author) + '</span>' +
+            (time ? '<span class="tweet-time">' + time + '</span>' : '') +
           '</div>' +
-          '<div class="search-result-text">' + escapeHtml(snippet) + '</div>' +
-          '<div class="search-result-url">' + escapeHtml(r.url) + '</div>' +
-          '<button class="btn-open-url" data-url="' + escapeHtml(r.url) + '">Open</button>' +
+          '<div class="tweet-text">' + linkedText + '</div>' +
+          '<div class="tweet-footer">' +
+            '<span class="tweet-stat">↩ ' + replies + '</span>' +
+            '<span class="tweet-stat">♺ ' + retweets + '</span>' +
+            '<span class="tweet-stat">♥ ' + likes + '</span>' +
+            (url ? '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener" class="tweet-url">Open Tweet ↗</a>' : '') +
+          '</div>' +
         '</div>';
       }).join('');
 

@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🔥 Doc-Grill — From doc to designed prototype in 3 questions</title>
+  <style>
+    :root {
+      --ink: #1a1814;
+      --paper: #faf9f7;
+      --paper-2: #f2f0ec;
+      --accent: #c04a1a; /* rust */
+      --accent-hover: #9a3a12;
+      --accent-light: #f5e8e2;
+      --border: #e2ddd8;
+      --muted: #7a736d;
+      --success: #2d6a4f;
+      --success-bg: #e8f5ef;
+      --font-display: 'DM Serif Display', Georgia, serif;
+      --font-body: 'DM Sans', system-ui, sans-serif;
+      --radius: 8px;
+      --shadow-sm: 0 1px 3px rgba(26,24,20,0.08);
+      --shadow-md: 0 4px 16px rgba(26,24,20,0.10);
+      --transition: 200ms ease;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--paper);
+      color: var(--ink);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+
+    /* ── Header ────────────────────────────────────────────────────────── */
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--paper);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--ink);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--paper);
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .logo-text {
+      font-family: var(--font-display);
+      font-size: 20px;
+      letter-spacing: -0.3px;
+    }
+    .logo-text span { color: var(--accent); }
+    .badge {
+      font-size: 11px;
+      background: var(--accent-light);
+      color: var(--accent);
+      padding: 3px 8px;
+      border-radius: 20px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    /* ── Main Layout ─────────────────────────────────────────────────────── */
+    main {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 48px 24px;
+    }
+
+    /* ── Hero ─────────────────────────────────────────────────────────── */
+    .hero {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    .hero h1 {
+      font-family: var(--font-display);
+      font-size: 40px;
+      line-height: 1.2;
+      letter-spacing: -0.5px;
+      margin-bottom: 12px;
+    }
+    .hero h1 em {
+      color: var(--accent);
+      font-style: normal;
+    }
+    .hero p {
+      font-size: 18px;
+      color: var(--muted);
+      max-width: 520px;
+      margin: 0 auto 32px;
+    }
+    .three-steps {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+    }
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--paper-2);
+      border: 1px solid var(--border);
+      border-radius: 40px;
+      padding: 10px 18px;
+      font-size: 14px;
+    }
+    .step-num {
+      width: 24px;
+      height: 24px;
+      background: var(--ink);
+      color: var(--paper);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    /* ── Document Input ────────────────────────────────────────────────── */
+    .input-section {
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 32px;
+    }
+    .input-label {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .input-row { display: flex; gap: 12px; }
+    .input-field {
+      flex: 1;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: var(--font-body);
+      font-size: 15px;
+      background: var(--paper);
+      color: var(--ink);
+      outline: none;
+      transition: border-color var(--transition);
+    }
+    .input-field:focus { border-color: var(--accent); }
+    .input-field::placeholder { color: var(--muted); }
+
+    /* ── PDF Upload Zone ───────────────────────────────────────────────── */
+    .pdf-upload-zone {
+      margin-top: 14px;
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all var(--transition);
+      background: var(--paper-2);
+    }
+    .pdf-upload-zone:hover, .pdf-upload-zone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-light);
+    }
+    .pdf-upload-zone .pdf-icon {
+      font-size: 28px;
+      margin-bottom: 8px;
+      display: block;
+    }
+    .pdf-upload-zone p {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0;
+    }
+    .pdf-upload-zone p strong { color: var(--accent); }
+    .pdf-upload-zone input[type=file] { display: none; }
+    .pdf-upload-zone .pdf-status {
+      margin-top: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--success);
+    }
+
+    .btn {
+      padding: 12px 24px;
+      border-radius: var(--radius);
+      font-family: var(--font-body);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all var(--transition);
+      white-space: nowrap;
+    }
+    .btn-primary {
+      background: var(--ink);
+      color: var(--paper);
+    }
+    .btn-primary:hover { background: #333; transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .format-chips {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      font-size: 12px;
+      padding: 4px 10px;
+      background: var(--paper-2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      color: var(--muted);
+    }
+    .chip strong { color: var(--ink); }
+
+    /* ── Session View ──────────────────────────────────────────────────── */
+    .session-view { display: none; }
+
+    .doc-summary {
+      background: var(--paper-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .doc-summary-icon {
+      width: 40px;
+      height: 40px;
+      background: var(--ink);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--paper);
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+    .doc-summary-info { flex: 1; min-width: 0; }
+    .doc-summary-info h3 {
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .doc-summary-info p { font-size: 12px; color: var(--muted); }
+
+    /* ── Grill Progress ─────────────────────────────────────────────────── */
+    .grill-progress {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+    .grill-progress .step-dots {
+      display: flex;
+      gap: 6px;
+      flex: 1;
+    }
+    .grill-progress .dot {
+      height: 4px;
+      flex: 1;
+      border-radius: 2px;
+      background: var(--border);
+      transition: background 0.3s;
+    }
+    .grill-progress .dot.done { background: var(--success); }
+    .grill-progress .dot.active { background: var(--accent); }
+    .grill-progress .step-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* ── Q&A Thread ─────────────────────────────────────────────────────── */
+    .qa-thread {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    .qa-item {}
+    .qa-question {
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+    }
+    .qa-question .label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .qa-question p {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--ink);
+    }
+
+    .qa-answer {
+      background: var(--paper-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      font-size: 14px;
+      color: var(--ink);
+    }
+    .qa-answer .label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .qa-connector {
+      width: 1px;
+      height: 20px;
+      background: var(--border);
+      margin-left: 20px;
+    }
+
+    /* ── Current Question ───────────────────────────────────────────────── */
+    .current-question {
+      background: var(--paper);
+      border: 2px solid var(--accent);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .current-question .label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .current-question .label::before {
+      content: '';
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .current-question h2 {
+      font-family: var(--font-display);
+      font-size: 22px;
+      line-height: 1.3;
+      margin-bottom: 16px;
+      color: var(--ink);
+    }
+    .choice-options {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .choice-option {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 18px;
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--paper);
+      cursor: pointer;
+      transition: all var(--transition);
+      text-align: left;
+      font-family: var(--font-body);
+      font-size: 15px;
+      color: var(--ink);
+      width: 100%;
+    }
+    .choice-option:hover {
+      border-color: var(--accent);
+      background: var(--accent-light);
+    }
+    .choice-option input { display: none; }
+    .choice-option .radio-dot {
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-radius: 50%;
+      flex-shrink: 0;
+      transition: all var(--transition);
+      position: relative;
+    }
+    .choice-option.selected {
+      border-color: var(--accent);
+      background: var(--accent-light);
+    }
+    .choice-option.selected .radio-dot {
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+    .choice-option.selected .radio-dot::after {
+      content: '';
+      position: absolute;
+      inset: 3px;
+      background: white;
+      border-radius: 50%;
+    }
+    .or-divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      margin: 4px 0;
+    }
+    .or-divider::before, .or-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+    .answer-textarea {
+      width: 100%;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: var(--font-body);
+      font-size: 15px;
+      resize: vertical;
+      min-height: 100px;
+      background: var(--paper);
+      color: var(--ink);
+      outline: none;
+      transition: border-color var(--transition);
+      margin-bottom: 12px;
+    }
+    .answer-textarea:focus { border-color: var(--accent); }
+    .btn-answer {
+      background: var(--accent);
+      color: white;
+      padding: 12px 28px;
+      font-size: 15px;
+    }
+    .btn-answer:hover { background: var(--accent-hover); }
+
+    /* ── Designing State ────────────────────────────────────────────────── */
+    .designing-state {
+      text-align: center;
+      padding: 48px;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .designing-state p {
+      font-size: 16px;
+      color: var(--muted);
+    }
+
+    /* ── Output ─────────────────────────────────────────────────────────── */
+    .output-section {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: var(--shadow-md);
+    }
+    .output-header {
+      background: var(--ink);
+      color: var(--paper);
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .output-header h3 {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .output-header .btn {
+      font-size: 12px;
+      padding: 8px 16px;
+      background: rgba(255,255,255,0.15);
+      color: white;
+    }
+    .output-header .btn:hover { background: rgba(255,255,255,0.25); }
+
+    .iframe-container {
+      background: white;
+      min-height: 500px;
+    }
+    .iframe-container iframe {
+      width: 100%;
+      min-height: 600px;
+      border: none;
+      display: block;
+    }
+
+    /* ── Error ──────────────────────────────────────────────────────────── */
+    .error-banner {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      color: #dc2626;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Loading ───────────────────────────────────────────────────────── */
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(250,249,247,0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .loading-box {
+      text-align: center;
+    }
+    .loading-box .spinner {
+      width: 48px;
+      height: 48px;
+      border-width: 4px;
+      margin-bottom: 16px;
+    }
+    .loading-box p { color: var(--muted); font-size: 15px; }
+
+    /* ── Responsive ─────────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .three-steps { flex-direction: column; align-items: center; }
+      header { padding: 12px 16px; }
+      .input-row { flex-direction: column; }
+      .hero h1 { font-size: 28px; }
+      main { padding: 24px 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">🔥</div>
+    <span class="logo-text">Doc<span>-Grill</span></span>
+  </div>
+  <span class="badge">Grill-Me × huashu-design</span>
+</header>
+
+<main>
+  <!-- Hero -->
+  <div class="hero">
+    <h1>Share a doc. Get a <em>designed prototype</em>.</h1>
+    <p>Paste a Google Doc, MD URL, or <strong>drop a PDF</strong> directly. Answer 3 sharp questions. Get a full interactive HTML prototype — no vague prompts, no generic output.</p>
+    <div class="three-steps">
+      <div class="step"><div class="step-num">1</div> Paste your doc URL</div>
+      <div class="step"><div class="step-num">2</div> Answer 3 questions</div>
+      <div class="step"><div class="step-num">3</div> Get a real prototype</div>
+    </div>
+  </div>
+
+  <!-- Document Input -->
+  <div class="input-section" id="input-section">
+    <div class="input-label">Document URL</div>
+    <div class="input-row">
+      <input class="input-field" id="doc-url" type="url" placeholder="https://docs.google.com/document/d/... or GitHub .md URL" autocomplete="off">
+      <button class="btn btn-primary" id="start-btn" onclick="startSession()">Start Grill →</button>
+    </div>
+    <div class="format-chips">
+      <span class="chip"><strong>Google Docs</strong> — read-only export</span>
+      <span class="chip"><strong>.md</strong> — GitHub raw URLs</span>
+      <span class="chip"><strong>PDF</strong> — client-side parsed</span>
+    </div>
+    <div id="pdf-upload-zone" class="pdf-upload-zone" onclick="document.getElementById('pdf-file').click()">
+      <span class="pdf-icon">📋</span>
+      <p>Drop a PDF here, or <strong>click to browse</strong></p>
+      <p style="font-size:11px; margin-top:4px;">PDF is parsed entirely in your browser — nothing is uploaded</p>
+      <input type="file" id="pdf-file" accept=".pdf" onchange="handlePdfFile(this.files[0])">
+      <div class="pdf-status" id="pdf-status"></div>
+    </div>
+    <div id="input-error"></div>
+  </div>
+
+  <!-- Session View -->
+  <div class="session-view" id="session-view">
+    <div class="grill-progress" id="grill-progress">
+      <div class="step-dots">
+        <div class="dot" id="dot-1"></div>
+        <div class="dot" id="dot-2"></div>
+        <div class="dot" id="dot-3"></div>
+      </div>
+      <div class="step-label" id="step-label">Q1 of 3</div>
+    </div>
+
+    <div class="doc-summary" id="doc-summary">
+      <div class="doc-summary-icon" id="doc-icon">📄</div>
+      <div class="doc-summary-info">
+        <h3 id="doc-name">—</h3>
+        <p id="doc-type">—</p>
+      </div>
+    </div>
+
+    <!-- Q&A Thread -->
+    <div class="qa-thread" id="qa-thread"></div>
+
+    <!-- Current Question -->
+    <div class="current-question" id="current-question" style="display:none">
+      <div class="label" id="question-label">Your turn</div>
+      <h2 id="question-text"></h2>
+      <div class="choice-options" id="choice-options"></div>
+      <textarea class="answer-textarea" id="answer-input" placeholder="Your answer... (or pick a choice above)" rows="3"></textarea>
+      <button class="btn btn-answer" id="answer-btn" onclick="submitAnswer()">Answer →</button>
+    </div>
+    <div style="text-align:center; margin-top:12px;">
+      <button onclick="resetSession()" style="background:none; border:none; color:var(--muted); font-size:12px; cursor:pointer; text-decoration:underline;">Start over</button>
+    </div>
+    <div style="text-align:center; margin-top:12px;">
+      <button onclick="resetSession()" style="background:none; border:none; color:var(--muted); font-size:12px; cursor:pointer; text-decoration:underline;">Start over</button>
+    </div>
+
+    <!-- Designing State -->
+    <div class="designing-state" id="designing-state" style="display:none">
+      <div class="spinner"></div>
+      <p>Grilling complete — now generating your prototype...</p>
+    </div>
+
+    <!-- Output -->
+    <div class="output-section" id="output-section" style="display:none">
+      <div class="output-header">
+        <h3>🖥️ Your Interactive Prototype</h3>
+        <button class="btn" onclick="openInNewTab()">↗ Open full screen</button>
+      </div>
+      <div class="iframe-container">
+        <iframe id="output-frame" sandbox="allow-scripts allow-same-origin"></iframe>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+  // ── State ─────────────────────────────────────────────────────────────────
+  let sessionId = null;
+  let currentQNum = 0;
+  let answeredCount = 0;
+  let pendingHtml = null;
+  let pdfText = null;   // extracted PDF text from client-side parsing
+  let pdfName = null;   // original filename for display
+
+  // Init progress dots
+  updateProgress(1);
+
+  // ── PDF File Handler (client-side PDF.js) ─────────────────────────────────
+  async function handlePdfFile(file) {
+    if (!file || file.type !== 'application/pdf') {
+      document.getElementById('pdf-status').textContent = 'Please select a valid PDF file.';
+      return;
+    }
+
+    const status = document.getElementById('pdf-status');
+    status.textContent = 'Loading PDF.js…';
+    status.style.color = 'var(--muted)';
+
+
+    try {
+      // Dynamic import of PDF.js ES module
+      const [{ getDocument, GlobalWorkerOptions }] = await Promise.all([
+        import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs')
+      ]);
+      GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+
+
+      status.textContent = 'Parsing PDF…';
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await getDocument({ data: arrayBuffer }).promise;
+      const numPages = pdf.numPages;
+
+      const pages = [];
+      for (let i = 1; i <= numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        const text = content.items.map(item => item.str).join(' ');
+        pages.push(`[Page ${i}]\n${text}`);
+      }
+
+      pdfText = pages.join('\n\n');
+      pdfName = file.name;
+      status.textContent = `✓ ${numPages} pages extracted — click "Start Grill →" to begin`;
+      status.style.color = 'var(--success)';
+
+      // Auto-fill URL field with filename as placeholder hint
+      if (!document.getElementById('doc-url').value.trim()) {
+        document.getElementById('doc-url').placeholder = `[PDF] ${file.name} — ready to grill`;
+      }
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
+      status.style.color = '#dc2626';
+      console.error('PDF parse error:', e);
+    }
+  }
+
+  // ── Drag-and-drop for PDF zone ──────────────────────────────────────────
+  const pdfZone = document.getElementById('pdf-upload-zone');
+  pdfZone.addEventListener('dragover', e => { e.preventDefault(); pdfZone.classList.add('drag-over'); });
+  pdfZone.addEventListener('dragleave', () => pdfZone.classList.remove('drag-over'));
+  pdfZone.addEventListener('drop', e => {
+    e.preventDefault();
+    pdfZone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f) handlePdfFile(f);
+  });
+
+  // ── Start Session ──────────────────────────────────────────────────────────
+  async function startSession() {
+    const url = document.getElementById('doc-url').value.trim();
+    const errDiv = document.getElementById('input-error');
+    errDiv.innerHTML = '';
+
+    const btn = document.getElementById('start-btn');
+    btn.disabled = true;
+    btn.textContent = 'Fetching doc…';
+
+    try {
+      let payload;
+      if (pdfText) {
+        // Use extracted PDF text — send as 'text' field
+        payload = { text: pdfText };
+      } else if (url) {
+        payload = { url };
+      } else {
+        throw new Error('Paste a URL or drop a PDF first.');
+      }
+
+      const resp = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || 'Server error');
+      }
+      const data = await resp.json();
+      sessionId = data.sessionId || data.id;
+
+      // Update doc summary
+      const icon = document.getElementById('doc-icon');
+      const docType = document.getElementById('doc-type');
+      const docName = document.getElementById('doc-name');
+      if (pdfText) {
+        icon.textContent = '📕'; docType.textContent = 'PDF (client-side)'; docName.textContent = pdfName || 'PDF document';
+      } else if (url.includes('docs.google.com')) {
+        icon.textContent = '📘'; docType.textContent = 'Google Doc'; docName.textContent = url.split('/d/')[1]?.split('/')[0] || 'Google Doc';
+      } else if (url.endsWith('.pdf')) {
+        icon.textContent = '📕'; docType.textContent = 'PDF URL'; docName.textContent = url.split('/').pop();
+      } else {
+        icon.textContent = '📝'; docType.textContent = 'Markdown'; docName.textContent = url.split('/').pop();
+      }
+
+      // Show session
+      document.getElementById('input-section').style.display = 'none';
+      document.getElementById('session-view').style.display = 'block';
+
+      const questionText = data.firstQuestion || data.nextQuestion;
+      const opts = parseChoiceOptions(questionText);
+      showQuestion(questionText, 1, opts);
+
+    } catch (e) {
+      errDiv.innerHTML = `<div class="error-banner">${e.message}</div>`;
+      btn.disabled = false;
+      btn.textContent = 'Start Grill →';
+    }
+  }
+
+  // ── Grill Progress ───────────────────────────────────────────────────────
+  function updateProgress(qNum) {
+    for (let i = 1; i <= 3; i++) {
+      const dot = document.getElementById('dot-' + i);
+      if (!dot) continue;
+      dot.className = 'dot' + (i < qNum ? ' done' : i === qNum ? ' active' : '');
+    }
+    const label = document.getElementById('step-label');
+    if (label) label.textContent = qNum <= 3 ? 'Q' + qNum + ' of 3' : 'Done!';
+  }
+
+  // ── Reset Session ─────────────────────────────────────────────────────────
+  function resetSession() {
+    if (!confirm('Start a new session? Current progress will be lost.')) return;
+    pdfText = null;
+    pdfName = null;
+    sessionId = null;
+    document.getElementById('pdf-status').textContent = '';
+    document.getElementById('qa-thread').innerHTML = '';
+    document.getElementById('current-question').style.display = 'none';
+    document.getElementById('designing-state').style.display = 'none';
+    document.getElementById('output-section').style.display = 'none';
+    document.getElementById('session-view').style.display = 'none';
+    document.getElementById('input-section').style.display = 'block';
+    document.getElementById('start-btn').disabled = false;
+    document.getElementById('start-btn').textContent = 'Start Grill →';
+    updateProgress(1);
+  }
+
+  // ── Parse choice options from question text ───────────────────────────────
+  function parseChoiceOptions(text) {
+    // Pattern 1: **[A] Title**: — asterisks around the [A] label itself
+    const m1 = text.match(/\*\*\[A\]\s*([^\*]+)\*\*[:\s]*/);
+    if (m1) {
+      const b1 = text.match(/\*\*\[B\]\s*([^\*]+)\*\*[:\s]*/);
+      if (b1) return [m1[1].trim(), b1[1].trim()];
+    }
+    // Pattern 2: [A] **Title**: — brackets before bold title
+    const m2 = text.match(/\[A\]\s*\*\*([^\*]+)\*\*[:\s]*/);
+    if (m2) {
+      const b2 = text.match(/\[B\]\s*\*\*([^\*]+)\*\*[:\s]*/);
+      if (b2) return [m2[1].trim(), b2[1].trim()];
+    }
+    // Pattern 3: plain [A] ... [B] ... inline labels
+    const m3 = text.match(/\[A\]\s*([^\n]{5,70})/);
+    if (m3) {
+      const b3 = text.match(/\[B\]\s*([^\n]{5,70})/);
+      if (b3) return [m3[1].replace(/\*+$/, '').trim(), b3[1].replace(/\*+$/, '').trim()];
+    }
+    // Pattern 4: Option 1: ... Option 2: ...
+    const optMatch = text.match(/Option\s*1[:\s]+([^\n]{10,80})\s+Option\s*2[:\s]+([^\n]{10,80})/i);
+    if (optMatch) return [optMatch[1].trim(), optMatch[2].trim()];
+    return null;
+  }
+
+
+  // ── Show Question ──────────────────────────────────────────────────────────
+  function showQuestion(text, num, options) {
+    currentQNum = num;
+    updateProgress(num);
+    document.getElementById('question-label').textContent = `Question ${num} of 3`;
+    document.getElementById('question-text').textContent = text;
+
+    const choicesDiv = document.getElementById('choice-options');
+    const textarea = document.getElementById('answer-input');
+    choicesDiv.innerHTML = '';
+    textarea.value = '';
+
+    if (options && options.length === 2) {
+      const a = stripMarkdown(options[0]);
+      const b = stripMarkdown(options[1]);
+      choicesDiv.innerHTML = `
+        <div class="choice-options">
+          <button class="choice-option" onclick="selectChoice(this, '${encodeURIComponent(a)}')">
+            <span class="radio-dot"></span>
+            <span>${escapeHtml(a)}</span>
+          </button>
+          <div class="or-divider">or</div>
+          <button class="choice-option" onclick="selectChoice(this, '${encodeURIComponent(b)}')">
+            <span class="radio-dot"></span>
+            <span>${escapeHtml(b)}</span>
+          </button>
+        </div>`;
+      textarea.placeholder = 'Your answer...';
+    } else if (options && options.length > 2) {
+      choicesDiv.innerHTML = '<div class="choice-options">' +
+        options.map((opt) => `
+          <button class="choice-option" onclick="selectChoice(this, '${encodeURIComponent(stripMarkdown(opt))}')">
+            <span class="radio-dot"></span>
+            <span>${escapeHtml(stripMarkdown(opt))}</span>
+          </button>`).join('<div class="or-divider">or</div>') +
+        '</div>';
+      textarea.placeholder = '...or type your own answer';
+    } else {
+      textarea.placeholder = 'Your answer...';
+    }
+
+    document.getElementById('current-question').style.display = 'block';
+    document.getElementById('designing-state').style.display = 'none';
+    textarea.focus();
+  }
+
+  function stripMarkdown(text) {
+    return text
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/~~([^~]+)~~/g, '$1')
+      .replace(/^#+\s+/gm, '')
+      .replace(/^>+\s+/gm, '')
+      .replace(/\n/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function selectChoice(btn, encodedText) {
+    document.querySelectorAll('.choice-option').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    document.getElementById('answer-input').value = decodeURIComponent(encodedText);
+  }
+
+  // ── Add Q&A to thread ────────────────────────────────────────────────────────
+  function addToThread(question, answer, questionNum) {
+    const thread = document.getElementById('qa-thread');
+
+    if (questionNum > 1) {
+      const connector = document.createElement('div');
+      connector.className = 'qa-connector';
+      thread.appendChild(connector);
+    }
+
+    const item = document.createElement('div');
+    item.className = 'qa-item';
+
+    let answerHtml = '';
+    if (answer) {
+      answerHtml = `
+        <div class="qa-answer">
+          <div class="label">Your answer</div>
+          <p>${escapeHtml(answer)}</p>
+        </div>
+        <div class="qa-connector"></div>`;
+    }
+
+    item.innerHTML = `
+      <div class="qa-question">
+        <div class="label">Question ${questionNum}</div>
+        <p>${escapeHtml(question)}</p>
+      </div>
+      ${answerHtml}`;
+
+    thread.appendChild(item);
+    thread.scrollTop = thread.nextSibling;
+  }
+
+  // ── Submit Answer ───────────────────────────────────────────────────────────
+  async function submitAnswer() {
+    const answer = document.getElementById('answer-input').value.trim();
+    if (!answer) return;
+
+    const btn = document.getElementById('answer-btn');
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+
+    // Add to thread immediately
+    const currentQ = document.getElementById('question-text').textContent;
+    addToThread(currentQ, answer, currentQNum);
+    answeredCount++;
+
+    document.getElementById('current-question').style.display = 'none';
+
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer })
+      });
+      const data = await resp.json();
+
+      if (data.done) {
+        // All done — show designing spinner then output
+        document.getElementById('designing-state').style.display = 'block';
+        pendingHtml = data.html;
+        // Poll for output
+        pollForOutput();
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'Answer →';
+        const opts = parseChoiceOptions(data.nextQuestion);
+        showQuestion(data.nextQuestion, data.questionNumber, opts);
+      }
+    } catch (e) {
+      alert('Failed to send answer: ' + e.message);
+      btn.disabled = false;
+      btn.textContent = 'Answer →';
+    }
+  }
+
+  // ── Poll for output ────────────────────────────────────────────────────────
+  async function pollForOutput() {
+    // The /answer endpoint returns html directly when done, so we already have it
+    // Just display it
+    if (pendingHtml) {
+      displayOutput(pendingHtml);
+    }
+  }
+
+  // ── Display Output ────────────────────────────────────────────────────────
+  function displayOutput(html) {
+    document.getElementById('designing-state').style.display = 'none';
+    updateProgress(4); // beyond Q3 = done
+
+    const frame = document.getElementById('output-frame');
+    frame.srcdoc = html;
+    document.getElementById('output-section').style.display = 'block';
+
+    // Scroll to output
+    document.getElementById('output-section').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  // ── Open in new tab ────────────────────────────────────────────────────────
+  function openInNewTab() {
+    const html = document.getElementById('output-frame').srcdoc;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  }
+
+  // ── Utilities ───────────────────────────────────────────────────────────────
+  function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '<br>');
+  }
+
+  // ── Enter key to submit ────────────────────────────────────────────────────
+  document.getElementById('answer-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitAnswer();
+  });
+  document.getElementById('doc-url').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') startSession();
+  });
+</script>
+</body>
+</html>

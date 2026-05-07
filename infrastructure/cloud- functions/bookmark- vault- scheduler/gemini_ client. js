@@ -1,0 +1,81 @@
+/**
+ * Gemini Multimodal Client
+ * Handles interaction with Gemini 2.0 Flash for visual and audio analysis
+ */
+const axios = require('axios');
+class GeminiClient {
+  constructor(cookies = '') {
+    this.apiKey = process.env.GOOGLE_API_KEY;
+    this.endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+    this.cookies = cookies;
+  }
+
+  /**
+   * Analyze media using raw bytes (direct upload to Gemini)
+   */
+  async analyzeMediaBytes(data, mimeType, caption = '') {
+    if (!this.apiKey) throw new Error('GOOGLE_API_KEY is not set');
+    const prompt = `You are a world-class Visual Content Auditor and Curator.
+Analyze the provided media asset and caption "${caption.substring(0, 200)}".
+Extract structural knowledge as JSON: {subject, mood, visual_ tags, narrative_summary, aesthetic_score}.
+Return ONLY valid JSON.`;
+    try {
+      const response = await axios.post(`${this.endpoint}?key=${this.apiKey}`, {
+        contents: [{ parts: [
+          { text: prompt },
+          { inline_ data: { mime_ type: mimeType, data: data.toString('base64') } }
+        ] }],
+        generationConfig: { response_ mime_type: 'application/json' }
+      });
+      return JSON.parse(response.data.candidates[0].content.parts[0].text);
+    } catch (error) {
+      console.error('[GeminiClient] Analysis failed:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Analyze text- only content
+   */
+  async analyzeText(text, platform = 'twitter') {
+    if (!this.apiKey) throw new Error('GOOGLE_API_KEY is not set');
+    const prompt = `You are a world-class Visual Content Auditor.
+Analyze this ${platform} post and extract knowledge as JSON:
+{subject, mood, visual_ tags (3-5), narrative_summary, aesthetic_score (1-10)}.
+Post: "${text.replace(/"/g, '\\"').substring(0, 500)}"
+Return ONLY valid JSON.`;
+    try {
+      const response = await axios.post(`${this.endpoint}?key=${this.apiKey}`, {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { response_ mime_type: 'application/json' }
+      });
+      return JSON.parse(response.data.candidates[0].content.parts[0].text);
+    } catch (error) {
+      console.error('[GeminiClient] Text analysis failed:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Helper to convert URL to base64 for Gemini inline_ data
+   */
+  async urlToBase64(url) {
+    try {
+      const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en- US,en;q=0.9',
+          'Referer': 'https://www.instagram.com/',
+          'Cookie': this.cookies
+        }
+      });
+      return Buffer.from(response.data, 'binary').toString('base64');
+    } catch (error) {
+      console.error(`[GeminiClient] Failed to download media from ${url}:`, error.message);
+      throw error;
+    }
+  }
+}
+module.exports = { GeminiClient };

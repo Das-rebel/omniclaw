@@ -22,6 +22,19 @@ DEFAULT_VIEWPORT = {"width": 1280, "height": 720}  # Smaller = faster
 DEFAULT_TIMEOUT = 15000  # 15s instead of 30s
 FAST_WAIT = 0.1
 
+# Form engine integration
+try:
+    from form_engine import (
+        ResumeParser,
+        FieldMatcher,
+        FormAnalyzer,
+        FormFiller,
+        analyze_and_fill,
+    )
+    FORM_ENGINE_AVAILABLE = True
+except ImportError:
+    FORM_ENGINE_AVAILABLE = False
+
 class BrowserManager:
     def __init__(self):
         self._playwright = None
@@ -649,6 +662,182 @@ class BrowserManager:
             title = ""
         return {"success": True, "new_tab_id": new_tab_id, "url": new_page.url, "title": title}
 
+    # ------------------------------------------------------------------
+    # Form Engine methods
+    # ------------------------------------------------------------------
+
+    async def parse_resume(self, resume_text: str) -> dict:
+        """Parse a plain-text resume into structured profile data."""
+        if not FORM_ENGINE_AVAILABLE:
+            return {"error": "form_engine module not available"}
+        try:
+            parser = ResumeParser()
+            profile = await parser.parse(resume_text)
+            return {"success": True, "profile": profile}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def analyze_form(self, tab_id: str) -> dict:
+        """Analyze the current page's form structure (Google Forms, standard HTML, Material UI, etc.)."""
+        if not FORM_ENGINE_AVAILABLE:
+            return {"error": "form_engine module not available"}
+        if tab_id not in self.pages:
+            return {"error": "Tab not found"}
+
+        page = self.pages[tab_id]["page"]
+        try:
+            analyzer = FormAnalyzer()
+            analysis = await analyzer.analyze(page)
+            return {"success": True, "analysis": analysis}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def fill_form(
+        self,
+        tab_id: str,
+        profile: dict,
+        skip_types: list = None,
+        fill_unmatched: bool = False,
+    ) -> dict:
+        """Fill form fields on the page using profile data. Auto-analyzes the form first."""
+        if not FORM_ENGINE_AVAILABLE:
+            return {"error": "form_engine module not available"}
+        if tab_id not in self.pages:
+            return {"error": "Tab not found"}
+
+        page = self.pages[tab_id]["page"]
+        try:
+            analyzer = FormAnalyzer()
+            analysis = await analyzer.analyze(page)
+
+            filler = FormFiller()
+            result = await filler.fill(
+                page,
+                analysis,
+                profile,
+                skip_semantic_types=skip_types,
+                fill_unmatched=fill_unmatched,
+            )
+
+            return {
+                "success": True,
+                "fill_result": result,
+                "form_type": analysis.get("form_type"),
+                "total_fields": analysis.get("total_fields", 0),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def fill_form_from_resume(
+        self,
+        tab_id: str,
+        resume_text: str,
+        skip_types: list = None,
+        fill_unmatched: bool = False,
+    ) -> dict:
+        """Parse a resume and fill form fields in one shot."""
+        if not FORM_ENGINE_AVAILABLE:
+            return {"error": "form_engine module not available"}
+        if tab_id not in self.pages:
+            return {"error": "Tab not found"}
+
+        page = self.pages[tab_id]["page"]
+        try:
+            # Parse resume
+            parser = ResumeParser()
+            profile = await parser.parse(resume_text)
+
+            # Analyze form
+            analyzer = FormAnalyzer()
+            analysis = await analyzer.analyze(page)
+
+            # Fill
+            filler = FormFiller()
+            result = await filler.fill(
+                page,
+                analysis,
+                profile,
+                skip_semantic_types=skip_types,
+                fill_unmatched=fill_unmatched,
+            )
+
+            return {
+                "success": True,
+                "profile": profile,
+                "fill_result": result,
+                "form_type": analysis.get("form_type"),
+                "total_fields": analysis.get("total_fields", 0),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def fill_form_page(
+        self,
+        tab_id: str,
+        profile: dict,
+        skip_types: list = None,
+        fill_unmatched: bool = False,
+    ) -> dict:
+        """Fill current page of a multi-page form and click Next. Returns fill result."""
+        if not FORM_ENGINE_AVAILABLE:
+            return {"error": "form_engine module not available"}
+        if tab_id not in self.pages:
+            return {"error": "Tab not found"}
+
+        page = self.pages[tab_id]["page"]
+        try:
+            analyzer = FormAnalyzer()
+            analysis = await analyzer.analyze(page)
+
+            filler = FormFiller()
+            result = await filler.fill_and_advance(
+                page,
+                analysis,
+                profile,
+                skip_semantic_types=skip_types,
+                fill_unmatched=fill_unmatched,
+            )
+
+            return {
+                "success": True,
+                "fill_result": result,
+                "form_type": analysis.get("form_type"),
+                "total_fields": analysis.get("total_fields", 0),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def submit_form(self, tab_id: str) -> dict:
+        """Submit the current form by clicking the Submit button."""
+        if not FORM_ENGINE_AVAILABLE:
+            return {"error": "form_engine module not available"}
+        if tab_id not in self.pages:
+            return {"error": "Tab not found"}
+
+        page = self.pages[tab_id]["page"]
+        try:
+            analyzer = FormAnalyzer()
+            analysis = await analyzer.analyze(page)
+
+            submit_btn = analysis.get("submit_button")
+            if not submit_btn:
+                return {"error": "No submit button found on this page"}
+
+            selector = submit_btn.get("selector", "")
+            if not selector:
+                return {"error": "Submit button found but no selector available"}
+
+            await page.click(selector, timeout=5000)
+            await page.wait_for_load_state("domcontentloaded", timeout=10000)
+
+            return {
+                "success": True,
+                "url": page.url,
+                "title": await page.title(),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
     async def shutdown(self):
         for p in self.pages.values():
             await p["page"].close()
@@ -680,7 +869,7 @@ class MCPServer:
             return {"jsonrpc": "2.0", "id": req_id, "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {"listChanged": True}},
-                "serverInfo": {"name": "sota-browser", "version": "1.1.0"}}}
+                "serverInfo": {"name": "sota-browser", "version": "1.2.0"}}}
 
         if method == "notifications/initialized":
             return None
@@ -740,7 +929,20 @@ class MCPServer:
                 {"name": "browser_go_back", "description": "Navigate back in browser history",
                  "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}}, "required": ["tab_id"]}},
                 {"name": "browser_switch_tab", "description": "Switch to a different tab by index",
-                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "tab_index": {"type": "integer"}}, "required": ["tab_id", "tab_index"]}}
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "tab_index": {"type": "integer"}}, "required": ["tab_id", "tab_index"]}},
+                # --- Form Engine tools ---
+                {"name": "browser_parse_resume", "description": "Parse plain-text resume into structured profile data (name, email, phone, education, experience, skills, etc). Use this to extract profile data before filling forms.",
+                 "inputSchema": {"type": "object", "properties": {"resume_text": {"type": "string", "description": "Plain-text resume content"}}, "required": ["resume_text"]}},
+                {"name": "browser_analyze_form", "description": "Analyze the current page's form structure. Detects Google Forms, standard HTML, Material UI, Ant Design, Bootstrap forms. Returns field types, labels, options, required status, and submit/navigation buttons.",
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}}, "required": ["tab_id"]}},
+                {"name": "browser_fill_form", "description": "Fill form fields on the page using structured profile data. Auto-analyzes the form, matches fields to profile keys (first_name, email, phone, etc.), and fills them. Works with Google Forms, standard HTML, Material UI, etc.",
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "profile": {"type": "object", "description": "Profile data with keys like first_name, last_name, email, phone, city, state, etc."}, "skip_types": {"type": "array", "items": {"type": "string"}, "description": "Semantic field types to skip (e.g. [\"salary\", \"gender\"])"}, "fill_unmatched": {"type": "boolean", "description": "Try to fill fields even without direct profile match"}}, "required": ["tab_id", "profile"]}},
+                {"name": "browser_fill_form_from_resume", "description": "Parse a resume AND fill form fields in one shot. Pass raw resume text, it will be parsed into a profile and used to auto-fill all matching form fields.",
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "resume_text": {"type": "string", "description": "Plain-text resume content"}, "skip_types": {"type": "array", "items": {"type": "string"}, "description": "Semantic field types to skip"}, "fill_unmatched": {"type": "boolean", "description": "Try to fill fields even without direct profile match"}}, "required": ["tab_id", "resume_text"]}},
+                {"name": "browser_fill_form_page", "description": "Fill current page of a multi-page form and click Next to advance. Use for Google Forms with multiple pages/sections.",
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}, "profile": {"type": "object", "description": "Profile data"}, "skip_types": {"type": "array", "items": {"type": "string"}}, "fill_unmatched": {"type": "boolean"}}, "required": ["tab_id", "profile"]}},
+                {"name": "browser_submit_form", "description": "Submit the current form by finding and clicking the Submit button. Auto-detects the submit button from form analysis.",
+                 "inputSchema": {"type": "object", "properties": {"tab_id": {"type": "string"}}, "required": ["tab_id"]}}
             ]}}
 
         if method == "tools/call":
@@ -814,6 +1016,20 @@ class MCPServer:
             return await b.go_back(tid)
         if name == "browser_switch_tab":
             return await b.switch_tab(tid, args["tab_index"])
+
+        # Form Engine tools
+        if name == "browser_parse_resume":
+            return await b.parse_resume(args["resume_text"])
+        if name == "browser_analyze_form":
+            return await b.analyze_form(tid)
+        if name == "browser_fill_form":
+            return await b.fill_form(tid, args["profile"], args.get("skip_types"), args.get("fill_unmatched", False))
+        if name == "browser_fill_form_from_resume":
+            return await b.fill_form_from_resume(tid, args["resume_text"], args.get("skip_types"), args.get("fill_unmatched", False))
+        if name == "browser_fill_form_page":
+            return await b.fill_form_page(tid, args["profile"], args.get("skip_types"), args.get("fill_unmatched", False))
+        if name == "browser_submit_form":
+            return await b.submit_form(tid)
 
         return {"error": f"Unknown tool: {name}"}
 

@@ -1,0 +1,39 @@
+{
+  "name": "omniclaw-telegram",
+  "version": "1.0.0",
+  "description": "OmniClaw Telegram Bot - Express-based Telegram handler with OpenClaw agent integration",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "LOG_LEVEL=debug node index.js",
+    "start:polling": "TELEGRAM_MODE=polling node index.js",
+    "start:webhook": "TELEGRAM_MODE=webhook node index.js",
+    "deploy": "gcloud functions deploy telegramHandler --trigger-http --runtime=nodejs22 --memory=512MB --timeout=60s --max-instances=10 --region=us-central1 --allow-unauthenticated",
+    "logs": "gcloud functions logs read telegramHandler --region=us-central1 --limit=50",
+    "health": "curl -s http://localhost:18792/health | jq",
+    "test": "node test/test-runner.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0",
+    "express": "^4.22.1",
+    "body-parser": "^1.20.4",
+    "helmet": "^7.2.0",
+    "express-rate-limit": "^7.5.1",
+    "dotenv": "^17.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "omniclaw",
+    "openclaw",
+    "assistant"
+  ],
+  "author": "OmniClaw Team",
+  "license": "MIT"
+}

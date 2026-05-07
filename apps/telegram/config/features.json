@@ -1,0 +1,34 @@
+{
+  "channels_enabled": true,
+  "groups_enabled": true,
+  "media_download": true,
+  "voice_messages": true,
+  "inline_mode": false,
+  "commands": [
+    "/start",
+    "/help",
+    "/status",
+    "/search",
+    "/vault",
+    "/remind"
+  ],
+  "features": {
+    "multi_language": true,
+    "reply_chains": true,
+    "group_mentions": true,
+    "vault_integration": true,
+    "session_tracking": true,
+    "progressive_responses": false
+  },
+  "limits": {
+    "max_message_length": 4096,
+    "max_media_size_mb": 20,
+    "max_history_context": 10,
+    "session_timeout_minutes": 30
+  },
+  "supported_languages": [
+    "en",
+    "hi",
+    "hn"
+  ]
+}

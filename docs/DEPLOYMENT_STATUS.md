@@ -274,6 +274,47 @@ If any change causes issues, these are the previous working states:
 - **instagram-sync**: revision `instagram-sync-00005-cex` (before main.py rewrite)
 - **resilient-clients.js**: git checkout fc82e9b -- infrastructure/cloud-functions/deploy/resilient-clients.js
 
+## Vault Control Center
+
+A web dashboard deployed to Cloud Run providing permanent URL access to vault management.
+
+**URL:** https://omniclaw-vault-control-338789220059.us-central1.run.app
+
+**Features:**
+- Password-protected access (env var: `CONTROL_PASSWORD=omniclaw2026`)
+- Dashboard with vault data status (Twitter 800, Instagram 500, Bookmarks 98, Knowledge Graph 2,110 nodes)
+- Manual sync buttons for Twitter, Instagram, Bookmarks, and All
+- Vault data browser with pagination
+- Cloud Functions status view
+- Scheduled jobs status view
+- Auto-refresh every 60 seconds
+
+**Architecture:**
+- Cloud Run service: `omniclaw-vault-control`
+- Region: us-central1
+- Backend: Node.js + Express
+- Frontend: Embedded HTML/CSS/JS
+- Data source: GCS `gs://omniclaw-knowledge-graph/`
+
+**Files:**
+- `vault-control/index.js` - Express server
+- `vault-control/public/index.html` - Dashboard UI
+- `vault-control/public/style.css` - Dark theme styles
+- `vault-control/public/app.js` - Frontend logic
+- `vault-control/Dockerfile` - Container config
+
+**API Endpoints:**
+- `GET /api/vault/status` - Vault data status
+- `GET /api/vault/browse` - Data browser with ?file=&limit=&offset=
+- `GET /api/vault/history` - Recent sync history
+- `GET /api/vault/files` - List available vault files
+- `POST /api/sync/twitter` - Trigger Twitter sync
+- `POST /api/sync/instagram` - Trigger Instagram sync
+- `POST /api/sync/bookmarks` - Trigger Bookmarks sync
+- `POST /api/sync/all` - Trigger all syncs
+- `GET /api/functions/status` - Cloud Functions status
+- `GET /api/schedulers/status` - Scheduled jobs status
+
 ---
 Generated: 2026-05-04
 Session: OmniClaw Deployment Audit & Fix

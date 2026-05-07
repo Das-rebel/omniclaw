@@ -66,25 +66,63 @@ def scheduler(event=None, context=None):
     log("=== Bookmark Vault Scheduler Started ===")
 
     try:
-        from twitter_scraper import scrape_twitter_bookmarks
-        from instagram_scraper import scrape_instagram_saved
+        from twitter_scraper_gcs import scrape_twitter_bookmarks
+        from instagram_scraper_gcs import scrape_instagram_saved
 
-        # Twitter scraper is sync, call directly
-        twitter_result = scrape_twitter_bookmarks()
-
-        # Instagram scraper is async, run in event loop
+        # Run Twitter and Instagram in parallel using thread executor
+        # This way if one blocks, the other can still complete
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        instagram_result = loop.run_until_complete(scrape_instagram_saved())
+
+        def run_twitter():
+            return scrape_twitter_bookmarks()
+
+        def run_instagram():
+            return scrape_instagram_saved()
+
+        # Run both in parallel with a shared executor
+        from concurrent.futures import ThreadPoolExecutor
+        executor = ThreadPoolExecutor(max_workers=2)
+
+        twitter_future = loop.run_in_executor(executor, run_twitter)
+        instagram_future = loop.run_in_executor(executor, run_instagram)
+
+        # Wait for both with timeout
+        twitter_result = None
+        instagram_result = None
+        try:
+            # Get Twitter result with timeout (don't let it block forever)
+            twitter_result = loop.run_until_complete(
+                asyncio.wait_for(twitter_future, timeout=60)
+            )
+        except asyncio.TimeoutError:
+            log("Twitter scrape timed out after 60 seconds")
+            twitter_result = {"success": False, "error": "Timeout"}
+        except Exception as e:
+            log(f"Twitter scrape error: {e}")
+            twitter_result = {"success": False, "error": str(e)}
+
+        try:
+            instagram_result = loop.run_until_complete(
+                asyncio.wait_for(instagram_future, timeout=60)
+            )
+        except asyncio.TimeoutError:
+            log("Instagram scrape timed out after 60 seconds")
+            instagram_result = {"success": False, "error": "Timeout"}
+        except Exception as e:
+            log(f"Instagram scrape error: {e}")
+            instagram_result = {"success": False, "error": str(e)}
+
+        executor.shutdown(wait=False)
         loop.close()
 
         os.makedirs(VAULT_DIR, exist_ok=True)
         vault = {
             "lastUpdated": datetime.now().isoformat(),
-            "twitterSuccess": twitter_result.get("success", False),
-            "instagramSuccess": instagram_result.get("success", False),
-            "twitterNewBookmarks": twitter_result.get("new_bookmarks", 0),
-            "instagramNewPosts": instagram_result.get("new_posts", 0),
+            "twitterSuccess": twitter_result.get("success", False) if twitter_result else False,
+            "instagramSuccess": instagram_result.get("success", False) if instagram_result else False,
+            "twitterNewBookmarks": twitter_result.get("count", 0) if twitter_result else 0,
+            "instagramNewPosts": instagram_result.get("count", 0) if instagram_result else 0,
             "source": "bookmark-vault-scheduler"
         }
 
