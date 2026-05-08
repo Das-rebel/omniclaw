@@ -1,5 +1,35 @@
 # SOTA Browser MCP Server - Changelog
 
+## v2.0.0 (2026-05-09) - Form Engine v2: CSS Selector Matching + React Select
+
+### Breaking: Architecture Rewrite
+
+Complete rewrite based on research of Simplify Copilot, Auto-Apply-Helper (130KB),
+and greenhouse-autofill-chrome-extension. Key changes:
+
+**No LLM required** — pure rule-based matching and filling.
+
+**New Architecture:**
+- `FIELD_SELECTORS`: 45 semantic types × 179 CSS selectors tried in priority order
+- `LABEL_MAPPINGS`: 28 semantic types with text-based label matching
+- React Select handler: Full `pointerdown→mousedown→pointerup→mouseup→click` sequence
+- Portal-aware: Finds React-Select menus portaled to `<body>`
+- Proper event dispatching: `input` + `change` events for React/Vue/Angular
+- Skips already-filled fields, EEO/DEI, CAPTCHA fields
+
+**Classes:**
+- `ResumeParser` — Unchanged from v1
+- `FormScanner` (replaces `FormAnalyzer`) — CSS selector + label scanning
+- `FormFiller` — Rewritten with React Select support
+- `FieldMatcher` merged into `FormScanner._classify_field()`
+
+**Tested against:**
+- Real Greenhouse job application (Razorpay — 29 fields, React Select dropdowns)
+- Google Forms (Material Design)
+- Standard HTML forms
+
+**Net result:** -900 lines (2,398 → 1,128 net new), better reliability on React forms
+
 ## v1.2.0 (2026-05-07) - Form Engine: Auto-Fill Any Form
 
 ### New: Form Engine (6 new tools, 2,278 lines)
