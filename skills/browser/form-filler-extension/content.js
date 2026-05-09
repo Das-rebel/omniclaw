@@ -332,6 +332,8 @@
       if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue;
       if (tag === 'input' && type === '') continue;
       if (el.getAttribute('aria-hidden') === 'true') continue;
+      // Skip inputs inside MUI Autocomplete (handled by Strategy 3)
+      if (el.closest('[class*="MuiAutocomplete-root"]')) continue;
 
       // Build unique key
       const key = el.id || el.name || `${tag}:${type}:${Array.from(el.parentElement?.children || []).indexOf(el)}`;
@@ -439,50 +441,40 @@
       const input = ac.querySelector('input:not([type="hidden"])');
       if (!input) continue;
       
-      // Find what this autocomplete is for by checking nearby context
-      const formControl = ac.closest('[class*="MuiFormControl"]') || ac;
-      const allInputsInGroup = formControl.parentElement?.querySelectorAll('input[name]') || [];
+      // Skip if already captured as a standard field
+      const existingKey = input.id || input.name;
+      if (existingKey && seen.has(existingKey)) continue;
       
-      // Try to determine from context: what field comes before/after
-      const allFields = document.querySelectorAll('input[name], [class*="MuiAutocomplete-root"]');
-      let contextLabel = '';
+      // Open popup to read options and classify
+      const popupIcon = ac.querySelector('[class*="MuiAutocomplete-popupIndicator"]');
+      if (popupIcon) popupIcon.click();
+      // Small sync wait (can't await in scanFields)
+      const listbox = document.querySelector('[class*="MuiAutocomplete-listbox"]');
+      const options = listbox
+        ? Array.from(listbox.querySelectorAll('[class*="MuiAutocomplete-option"]')).map(o => o.textContent.trim())
+        : [];
       
-      // Check if there's a nearby label or heading
-      const parent = ac.parentElement;
-      if (parent) {
-        const prevSibling = ac.previousElementSibling;
-        if (prevSibling?.textContent?.trim()) {
-          contextLabel = prevSibling.textContent.trim();
-        }
-      }
-      
-      // Try to classify by position relative to named inputs
-      // Find the nearest named input above this autocomplete
+      // Classify by option content
       let semanticType = 'unknown';
-      const namedInputs = document.querySelectorAll('input[name]');
-      const allFormEls = Array.from(document.querySelectorAll('input, select, textarea, [class*="MuiAutocomplete"]'));
-      const acIndex = allFormEls.indexOf(ac);
-      
-      // Look at the preceding named input to guess context
-      if (acIndex > 0) {
-        for (let i = acIndex - 1; i >= 0; i--) {
-          const prev = allFormEls[i];
-          if (prev.name) {
-            const prevName = prev.name.toLowerCase();
-            // After salary fields → currency autocomplete
-            if (prevName.includes('ctc') || prevName.includes('salary') || prevName.includes('compensation')) {
-              semanticType = 'currency';
-            }
-            // After experience → location autocomplete
-            if (prevName.includes('experience') || prevName.includes('phone')) {
-              semanticType = 'location';
-            }
-            break;
-          }
-        }
+      const optText = options.join(' ').toLowerCase();
+      if (optText.includes('usd') || optText.includes('eur') || optText.includes('inr') || optText.includes('gbp')) {
+        semanticType = 'currency';
+      } else if (optText.includes('notice') || optText.includes('immediate') || optText.includes('joiner')) {
+        semanticType = 'notice_period';
+      } else if (optText.includes('india') || optText.includes('usa') || optText.includes('uk') || optText.includes('bangalore') || optText.includes('mumbai')) {
+        semanticType = 'city';
+      } else if (optText.includes('male') || optText.includes('female') || optText.includes('non-binary')) {
+        semanticType = 'gender';
+      } else if (optText.includes('bachelor') || optText.includes('master') || optText.includes('phd')) {
+        semanticType = 'degree';
+      } else if (optText.includes('yes') && optText.includes('no') && options.length <= 3) {
+        semanticType = 'yes_no';
       }
       
-      const key = `mui-ac:${input.id || acIndex}`;
+      // Close popup by pressing Escape
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      
+      const key = `mui-ac:${input.id || fields.length}`;
       if (seen.has(key)) continue;
       seen.add(key);
       
@@ -491,13 +483,14 @@
       
       fields.push({
         selector,
-        label: contextLabel || `MUI Autocomplete ${acIndex}`,
+        label: options.length > 0 ? `Options: ${options.slice(0, 5).join(', ')}${options.length > 5 ? '...' : ''}` : `MUI Autocomplete`,
         semanticType,
         type: 'mui-autocomplete',
         tag: 'input',
         required: false,
         hasValue: !!(input.value && input.value.trim()),
         isMuiAutocomplete: true,
+        options: options,
       });
     }
 
@@ -747,20 +740,49 @@
 
         if (isReactSelect || type === 'custom-dropdown') {
           success = await fillReactSelect(field, value);
-        } else if (isReactSelect || type === 'mui-autocomplete') {
-          // MUI Autocomplete: type to search, then select from dropdown
+        } else if (type === 'mui-autocomplete') {
+          // MUI Autocomplete: type to filter, then click matching option
           const el = document.querySelector(selector);
           if (el) {
-            fillTextField(el, value);
-            await new Promise(r => setTimeout(r, 300));
-            // Try to click the first option in the MUI popup
-            const option = document.querySelector('[class*="MuiAutocomplete-option"]');
-            if (option) {
-              option.click();
-              success = true;
-            } else {
-              // If no popup, the typed value might be accepted
-              success = true;
+            // Get the search term from value
+            const searchTerm = value.replace(/[^a-zA-Z0-9 ]/g, '').trim();
+            // Type to trigger filter
+            const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            if (nativeSetter) nativeSetter.call(el, searchTerm);
+            else el.value = searchTerm;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 400));
+            
+            // Find matching option in the popup
+            const listbox = document.querySelector('[class*="MuiAutocomplete-listbox"]');
+            if (listbox) {
+              const options = listbox.querySelectorAll('[class*="MuiAutocomplete-option"]');
+              const normalizedTarget = value.toLowerCase().trim();
+              
+              // Exact match first
+              for (const opt of options) {
+                if (opt.textContent.trim().toLowerCase() === normalizedTarget) {
+                  opt.click();
+                  success = true;
+                  break;
+                }
+              }
+              // Substring match
+              if (!success) {
+                for (const opt of options) {
+                  const optText = opt.textContent.trim().toLowerCase();
+                  if (optText.includes(normalizedTarget) || normalizedTarget.includes(optText)) {
+                    opt.click();
+                    success = true;
+                    break;
+                  }
+                }
+              }
+              // First option fallback
+              if (!success && options.length > 0) {
+                options[0].click();
+                success = true;
+              }
             }
           }
         } else if (type === 'select') {
