@@ -176,6 +176,63 @@
     start_date_month: ['start_date_month'],
     end_date_month: ['end_date_month'],
     willing_to_relocate: ['willing_to_relocate'],
+    full_name: ['full_name', 'first_name'],
+    privacy_policy: ['privacy_policy'],
+  };
+
+  // Placeholder-to-semantic type (for Reczee and similar forms)
+  const PLACEHOLDER_MAPPINGS = {
+    'enter your name': 'full_name',
+    'your name': 'full_name',
+    'enter your email': 'email',
+    'your email': 'email',
+    'enter your phone': 'phone',
+    'your phone number': 'phone',
+    'phone number': 'phone',
+    'enter your experience': 'years_of_experience',
+    'your experience': 'years_of_experience',
+    'enter current salary': 'salary',
+    'current salary': 'salary',
+    'enter expected salary': 'salary_expectations',
+    'expected salary': 'salary_expectations',
+    'enter your current ctc': 'salary',
+    'enter your expected ctc': 'salary_expectations',
+    'enter your notice period': 'notice_period',
+    'notice period': 'notice_period',
+    'enter your location': 'city',
+    'your location': 'city',
+    'enter your city': 'city',
+    'enter your linkedin': 'linkedin',
+    'linkedin url': 'linkedin',
+    'enter your company': 'current_company',
+    'company name': 'company_name',
+    'enter your designation': 'current_title',
+    'your designation': 'current_title',
+  };
+
+  // Name attribute → semantic type
+  const NAME_MAPPINGS = {
+    'name': 'full_name',
+    'email': 'email',
+    'phone': 'phone',
+    'experience': 'years_of_experience',
+    'current_ctc': 'salary',
+    'expected_ctc': 'salary_expectations',
+    'current_salary': 'salary',
+    'expected_salary': 'salary_expectations',
+    'notice_period': 'notice_period',
+    'location': 'city',
+    'city': 'city',
+    'company': 'current_company',
+    'designation': 'current_title',
+    'linkedin': 'linkedin',
+    'github': 'github',
+    'website': 'website',
+    'portfolio': 'website',
+    'first_name': 'first_name',
+    'last_name': 'last_name',
+    'resume': 'resume',
+    'privacy_policy': 'privacy_policy',
   };
 
   // =====================================================================
@@ -282,7 +339,26 @@
       seen.add(key);
 
       const label = findLabel(el);
-      const semanticType = classifyByLabel(label) || classifyByIdName(el);
+      const placeholder = el.getAttribute('placeholder') || '';
+      let semanticType = classifyByLabel(label) || classifyByIdName(el);
+      
+      // Fallback: placeholder matching (Reczee, etc.)
+      if (!semanticType || semanticType === 'unknown') {
+        const phLower = placeholder.toLowerCase().trim();
+        if (PLACEHOLDER_MAPPINGS[phLower]) {
+          semanticType = PLACEHOLDER_MAPPINGS[phLower];
+        }
+      }
+      
+      // Fallback: name attribute matching
+      if ((!semanticType || semanticType === 'unknown') && el.name) {
+        const nameKey = el.name.toLowerCase().replace(/[\[\]]/g, '');
+        if (NAME_MAPPINGS[nameKey]) {
+          semanticType = NAME_MAPPINGS[nameKey];
+        }
+      }
+      semanticType = semanticType || 'unknown';
+      
       const required = el.hasAttribute('required') || el.getAttribute('aria-required') === 'true' || label.includes('*');
 
       const selector = el.id ? `#${CSS.escape(el.id)}` :
@@ -354,6 +430,74 @@
         isReactSelect: true,
         controlSelector: selector,
         containerEl: true, // flag that selector points to container area
+      });
+    }
+
+    // Strategy 3: MUI Autocomplete (Reczee, etc.)
+    const muiAutocompletes = document.querySelectorAll('[class*="MuiAutocomplete-root"]');
+    for (const ac of muiAutocompletes) {
+      const input = ac.querySelector('input:not([type="hidden"])');
+      if (!input) continue;
+      
+      // Find what this autocomplete is for by checking nearby context
+      const formControl = ac.closest('[class*="MuiFormControl"]') || ac;
+      const allInputsInGroup = formControl.parentElement?.querySelectorAll('input[name]') || [];
+      
+      // Try to determine from context: what field comes before/after
+      const allFields = document.querySelectorAll('input[name], [class*="MuiAutocomplete-root"]');
+      let contextLabel = '';
+      
+      // Check if there's a nearby label or heading
+      const parent = ac.parentElement;
+      if (parent) {
+        const prevSibling = ac.previousElementSibling;
+        if (prevSibling?.textContent?.trim()) {
+          contextLabel = prevSibling.textContent.trim();
+        }
+      }
+      
+      // Try to classify by position relative to named inputs
+      // Find the nearest named input above this autocomplete
+      let semanticType = 'unknown';
+      const namedInputs = document.querySelectorAll('input[name]');
+      const allFormEls = Array.from(document.querySelectorAll('input, select, textarea, [class*="MuiAutocomplete"]'));
+      const acIndex = allFormEls.indexOf(ac);
+      
+      // Look at the preceding named input to guess context
+      if (acIndex > 0) {
+        for (let i = acIndex - 1; i >= 0; i--) {
+          const prev = allFormEls[i];
+          if (prev.name) {
+            const prevName = prev.name.toLowerCase();
+            // After salary fields → currency autocomplete
+            if (prevName.includes('ctc') || prevName.includes('salary') || prevName.includes('compensation')) {
+              semanticType = 'currency';
+            }
+            // After experience → location autocomplete
+            if (prevName.includes('experience') || prevName.includes('phone')) {
+              semanticType = 'location';
+            }
+            break;
+          }
+        }
+      }
+      
+      const key = `mui-ac:${input.id || acIndex}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      
+      const selector = input.id ? `#${CSS.escape(input.id)}` : null;
+      if (!selector) continue;
+      
+      fields.push({
+        selector,
+        label: contextLabel || `MUI Autocomplete ${acIndex}`,
+        semanticType,
+        type: 'mui-autocomplete',
+        tag: 'input',
+        required: false,
+        hasValue: !!(input.value && input.value.trim()),
+        isMuiAutocomplete: true,
       });
     }
 
@@ -542,6 +686,12 @@
     return null;
   }
 
+  function cleanNumericValue(value) {
+    // Strip non-numeric chars except dots
+    const cleaned = value.replace(/[^0-9.]/g, '');
+    return cleaned || value;
+  }
+
   // =====================================================================
   // SECTION 6: MAIN AUTOFILL ORCHESTRATOR
   // =====================================================================
@@ -597,12 +747,41 @@
 
         if (isReactSelect || type === 'custom-dropdown') {
           success = await fillReactSelect(field, value);
+        } else if (isReactSelect || type === 'mui-autocomplete') {
+          // MUI Autocomplete: type to search, then select from dropdown
+          const el = document.querySelector(selector);
+          if (el) {
+            fillTextField(el, value);
+            await new Promise(r => setTimeout(r, 300));
+            // Try to click the first option in the MUI popup
+            const option = document.querySelector('[class*="MuiAutocomplete-option"]');
+            if (option) {
+              option.click();
+              success = true;
+            } else {
+              // If no popup, the typed value might be accepted
+              success = true;
+            }
+          }
         } else if (type === 'select') {
           const el = document.querySelector(selector);
           if (el) success = fillDropdown(el, value);
-        } else {
+        } else if (type === 'checkbox') {
           const el = document.querySelector(selector);
-          if (el) success = fillTextField(el, value);
+          if (el && !el.checked) {
+            el.click();
+            success = true;
+          } else if (el && el.checked) {
+            success = true; // already checked
+          }
+        } else {
+          // Text/number/email/tel/textarea — clean value for number fields
+          let cleanVal = value;
+          if (type === 'number') {
+            cleanVal = cleanNumericValue(value);
+          }
+          const el = document.querySelector(selector);
+          if (el) success = fillTextField(el, cleanVal);
         }
 
         if (success) {
