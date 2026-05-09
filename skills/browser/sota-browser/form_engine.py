@@ -327,34 +327,49 @@ FIELD_SELECTORS: Dict[str, List[str]] = {
 # ---------------------------------------------------------------------------
 
 LABEL_MAPPINGS: Dict[str, List[str]] = {
-    "first_name": ["first name", "given name", "prénom", "nombre"],
-    "last_name": ["last name", "surname", "family name", "apellido", "nom"],
+    # Name
+    "first_name": ["first name", "given name", "prénom", "nombre", "first name*"],
+    "last_name": ["last name", "surname", "family name", "apellido", "nom", "last name*"],
     "full_name": ["full name", "your name", "applicant name", "candidate name", "legal name"],
-    "email": ["email", "e-mail", "email address"],
-    "phone": ["phone", "telephone", "mobile", "cell", "contact number"],
-    "linkedin": ["linkedin", "linkedin profile", "linkedin url"],
+    # Email
+    "email": ["email", "e-mail", "email address", "email*"],
+    # Phone
+    "phone": ["phone", "telephone", "mobile", "cell", "contact number", "phone*", "phone number"],
+    # Professional
+    "linkedin": ["linkedin", "linkedin profile", "linkedin url", "linkedin profile*"],
     "github": ["github", "github profile"],
     "website": ["website", "portfolio", "personal website", "personal site"],
-    "current_company": ["current company", "current employer", "most recent company"],
-    "current_title": ["current title", "current role", "current designation"],
-    "school": ["school", "university", "institution", "college"],
+    "current_company": ["current company", "current employer", "most recent company", "current company*"],
+    "current_title": ["current title", "current role", "current designation", "current designation*"],
+    # Work Experience
+    "company_name": ["company name", "company", "employer", "organization", "company name*"],
+    "job_title": ["title", "job title", "position", "role", "title*", "designation"],
+    "start_date_month": ["start date month", "start month", "from month", "start date month*"],
+    "start_date_year": ["start date year", "start year", "from year", "start date year*"],
+    "end_date_month": ["end date month", "end month", "to month", "end date month*"],
+    "end_date_year": ["end date year", "end year", "to year", "end date year*"],
+    # Education
+    "school": ["school", "university", "institution", "college", "school name"],
     "degree": ["degree", "qualification"],
     "discipline": ["discipline", "major", "field of study", "concentration"],
-    "salary": ["salary", "compensation", "ctc", "current ctc"],
-    "salary_expectations": ["expected ctc", "salary expectation", "expected salary", "salary requirement"],
-    "notice_period": ["notice period", "notice"],
-    "years_of_experience": ["years of experience", "total experience", "years of exp"],
-    "gender": ["gender"],
+    # Salary / Compensation
+    "salary": ["salary", "compensation", "ctc", "current ctc", "mention the current ctc", "current ctc*"],
+    "salary_expectations": ["expected ctc", "salary expectation", "expected salary", "salary requirement", "expected ctc (fixed)", "expected ctc (fixed)*"],
+    "notice_period": ["notice period", "notice", "notice period*"],
+    # Other
+    "years_of_experience": ["years of experience", "total experience", "years of exp", "total years of experience", "total years of experience*"],
+    "gender": ["gender", "gender*"],
     "city": ["city", "town", "locality"],
     "state": ["state", "province", "region"],
     "zip": ["zip", "postal code", "postcode"],
-    "country": ["country"],
+    "country": ["country", "country*"],
     "referral_source": ["how did you hear", "referral source", "source"],
     "cover_letter": ["cover letter"],
     "veteran": ["veteran", "military"],
     "disability": ["disability"],
-    "work_authorization": ["authorized to work", "legally authorized", "eligible to work"],
+    "work_authorization": ["authorized to work", "legally authorized", "eligible to work", "work authorization"],
     "sponsorship_required": ["sponsorship", "visa sponsorship", "require sponsorship"],
+    "willing_to_relocate": ["willing to work from office", "willing to relocate", "willing to work", "work from office"],
 }
 
 # ---------------------------------------------------------------------------
@@ -849,8 +864,9 @@ class FormScanner:
         label = field.get("label", "").lower()
         placeholder = field.get("placeholder", "").lower()
         ftype = field.get("type", "")
+        tag = field.get("tag", "")
 
-        # Type-based classification
+        # Type-based classification (only if no label)
         if ftype == "email" and not label:
             return "email"
         if ftype == "tel" and not label:
@@ -858,10 +874,55 @@ class FormScanner:
         if ftype == "url" and not label:
             return "website"
 
+        # ID-based exact match — most reliable for Greenhouse
+        if fid:
+            id_to_sem = {
+                "first_name": "first_name",
+                "last_name": "last_name",
+                "email": "email",
+                "phone": "phone",
+                "country": "country",
+                "resume": "resume",
+                "company-name-0": "company_name",
+                "title-0": "job_title",
+                "start-date-month-0": "start_date_month",
+                "start-date-year-0": "start_date_year",
+                "end-date-month-0": "end_date_month",
+                "end-date-year-0": "end_date_year",
+                "current-role-0_1": "current_role",
+            }
+            # Also try pattern matches
+            for key, sem in id_to_sem.items():
+                if fid == key:
+                    return sem
+            # Pattern-based ID matching
+            if "company-name" in fid:
+                return "company_name"
+            if fid.startswith("title-"):
+                return "job_title"
+            if "start-date-month" in fid:
+                return "start_date_month"
+            if "start-date-year" in fid:
+                return "start_date_year"
+            if "end-date-month" in fid:
+                return "end_date_month"
+            if "end-date-year" in fid:
+                return "end_date_year"
+            if "current-role" in fid:
+                return "current_role"
+            if fid.startswith("question_"):
+                # Custom question — classify by label below
+                pass
+
+        # Label-based classification (most reliable for custom questions)
+        if label:
+            result = self._classify_by_label(label)
+            if result != "unknown":
+                return result
+
         # Check if selector matches any FIELD_SELECTORS
         for sem_type, selectors in FIELD_SELECTORS.items():
             for sel in selectors:
-                # Check if the field's id or name matches the pattern in the selector
                 if 'id*="' in sel or 'id="' in sel:
                     pattern = re.search(r'id[*]?="([^"]+)"', sel)
                     if pattern and pattern.group(1).lower() in (fid, name):
@@ -870,10 +931,6 @@ class FormScanner:
                     pattern = re.search(r'name[*]?="([^"]+)"', sel)
                     if pattern and pattern.group(1).lower() in (fid, name):
                         return sem_type
-
-        # Label-based fallback
-        if label:
-            return self._classify_by_label(label)
 
         # Placeholder-based
         if placeholder:
@@ -902,14 +959,19 @@ class FormScanner:
         label_lower = label.lower().strip()
         # Remove trailing asterisks and whitespace
         label_clean = re.sub(r"[\s*]+$", "", label_lower)
+        # Also remove inline asterisks (e.g. "First Name*")
+        label_clean = label_clean.replace("*", "").strip()
 
         best_match = "unknown"
         best_score = 0
 
         for sem_type, keywords in LABEL_MAPPINGS.items():
             for kw in keywords:
-                if kw in label_clean:
-                    score = len(kw)
+                kw_clean = kw.replace("*", "").strip().lower()
+                if not kw_clean:
+                    continue
+                if kw_clean in label_clean or label_clean in kw_clean:
+                    score = len(kw_clean)
                     if score > best_score:
                         best_score = score
                         best_match = sem_type
@@ -1170,12 +1232,14 @@ class FormFiller:
             "first_name": ["first_name", "full_name"],
             "last_name": ["last_name", "full_name"],
             "email": ["email"],
-            "phone": ["phone", "phone_full"],
+            "phone": ["phone", "phone_full", "mobile"],
             "linkedin": ["linkedin"],
             "github": ["github"],
             "website": ["website", "portfolio"],
             "current_company": ["current_company"],
             "current_title": ["current_title"],
+            "company_name": ["current_company", "company_name"],
+            "job_title": ["current_title", "job_title"],
             "school": ["school", "university"],
             "highest_degree": ["highest_degree", "degree"],
             "salary": ["salary"],
@@ -1188,6 +1252,11 @@ class FormFiller:
             "city": ["city"],
             "state": ["state", "province"],
             "zip": ["zip", "postal_code"],
+            "start_date_year": ["start_date_year"],
+            "end_date_year": ["end_date_year"],
+            "start_date_month": ["start_date_month"],
+            "end_date_month": ["end_date_month"],
+            "willing_to_relocate": ["willing_to_relocate"],
         }
 
         for key in fallback_map.get(semantic_type, []):
@@ -1264,27 +1333,43 @@ class FormFiller:
     # -- field-level fill operations -----------------------------------------
 
     async def _fill_input(self, page: Any, selector: str, value: str) -> None:
-        """Fill an input field with proper event dispatching."""
+        """Fill an input field with proper React-compatible event dispatching."""
         await page.evaluate("""([sel, val]) => {
             const el = document.querySelector(sel);
             if (!el) return;
             el.scrollIntoView({behavior: 'smooth', block: 'center'});
-            el.focus();
-            el.value = val;
+            // Use native value setter for React compatibility
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value'
+            )?.set;
+            if (nativeInputValueSetter) {
+                nativeInputValueSetter.call(el, val);
+            } else {
+                el.value = val;
+            }
             el.dispatchEvent(new Event('input', {bubbles: true}));
             el.dispatchEvent(new Event('change', {bubbles: true}));
+            // Also dispatch for React 16+
+            el.dispatchEvent(new Event('blur', {bubbles: true}));
         }""", [selector, value])
 
     async def _fill_textarea(self, page: Any, selector: str, value: str) -> None:
-        """Fill a textarea with proper event dispatching."""
+        """Fill a textarea with React-compatible event dispatching."""
         await page.evaluate("""([sel, val]) => {
             const el = document.querySelector(sel);
             if (!el) return;
             el.scrollIntoView({behavior: 'smooth', block: 'center'});
-            el.focus();
-            el.value = val;
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLTextAreaElement.prototype, 'value'
+            )?.set;
+            if (nativeSetter) {
+                nativeSetter.call(el, val);
+            } else {
+                el.value = val;
+            }
             el.dispatchEvent(new Event('input', {bubbles: true}));
             el.dispatchEvent(new Event('change', {bubbles: true}));
+            el.dispatchEvent(new Event('blur', {bubbles: true}));
         }""", [selector, value])
 
     async def _fill_select(
