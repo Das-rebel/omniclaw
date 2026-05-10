@@ -206,6 +206,7 @@
       <button class="resume-tab active" data-rtab="import">📥 Import</button>
       <button class="resume-tab" data-rtab="paste">✏️ Paste Text</button>
       <button class="resume-tab" data-rtab="linkedin">🔗 LinkedIn</button>
+      <button class="resume-tab" data-rtab="enhancv">✨ PDF</button>
     </div>
 
     <!-- Import tab -->
@@ -258,6 +259,32 @@ Python, JavaScript, SQL, Machine Learning, AWS
       </div>
       <button class="btn-li-import" id="btn-li-import">📥 Import LinkedIn Profile</button>
       <div class="li-note">⚠️ You must be logged into LinkedIn in this browser for import to work.</div>
+    </div>
+
+
+    <!-- Enhancv tab -->
+    <div class="rtab-content" id="rtab-enhancv">
+      <div class="enhancv-info">
+        <div class="ei-icon">📄✨</div>
+        <div class="ei-title">Generate Polished PDF</div>
+        <div class="ei-desc">Turn your FillY profile into a beautifully designed resume PDF via Enhancv.</div>
+      </div>
+      <div class="f" id="enhancv-key-row">
+        <label>Enhancv API Key <span style="font-size:10px;color:#E17055">(required)</span></label>
+        <input type="password" id="enhancv-api-key" placeholder="enh_live_..." style="font-size:11px">
+        <div class="ei-hint">Get from <a href="#" id="enhancv-key-link" style="color:#6C5CE7;font-size:10px">app.enhancv.com → Profile → API Keys</a></div>
+      </div>
+      <div class="enhancv-preview" id="enhancv-schema-preview">
+        <div class="ep-label">Resume preview</div>
+        <div class="ep-name" id="ep-name">—</div>
+        <div class="ep-title" id="ep-title">—</div>
+        <div class="ep-sections" id="ep-sections">Fill your Profile tab first</div>
+      </div>
+      <button class="btn-enhancv-generate" id="btn-enhancv-generate">
+        <span>✨</span><span>Generate Resume PDF</span>
+      </button>
+      <div class="enhancv-status hidden" id="enhancv-status"></div>
+      <div class="enhancv-note">⚠️ PDF generation takes 10–20s. Enhancv Business plan required.</div>
     </div>
 
     <!-- Parsed results -->

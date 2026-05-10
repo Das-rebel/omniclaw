@@ -936,6 +936,43 @@
           }
           break;
         }
+        case 'FILLY_TO_ENHANCV': {
+          if (!window.FillYEnhancv) {
+            sendResponse({ success: false, error: 'Enhancv client not loaded' });
+          } else {
+            const schema = window.FillYEnhancv.fillProfileToEnhancv(message.profile || {});
+            sendResponse({ success: true, schema });
+          }
+          break;
+        }
+        case 'FILLY_ENHANCV_PDF': {
+          if (!window.FillYEnhancv) {
+            sendResponse({ success: false, error: 'Enhancv client not loaded' });
+          } else {
+            window.FillYEnhancv.setApiKey(message.apiKey);
+            const schema = message.schema;
+            try {
+              // Create resume
+              const created = await window.FillYEnhancv.createResume(schema);
+              const id = created.id || created._id || created;
+              // Wait for PDF generation (5-15s)
+              await new Promise(r => setTimeout(r, 3000)); // minimum buffer
+              const pdfBytes = await window.FillYEnhancv.exportPdfBytes(id);
+              // Convert to blob URL for download
+              const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+              const downloadUrl = URL.createObjectURL(blob);
+              sendResponse({
+                success: true,
+                resumeId: id,
+                downloadUrl,
+                filename: `resume-${(schema.header?.name || 'enhancv').replace(/\s+/g, '-').toLowerCase()}.pdf`
+              });
+            } catch (err) {
+              sendResponse({ success: false, error: err.message });
+            }
+          }
+          return true;
+        }
         default:
           sendResponse({ error: 'Unknown message type' });
       }

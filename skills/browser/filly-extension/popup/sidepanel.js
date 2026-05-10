@@ -512,6 +512,154 @@ function injectResumeParser(callback) {
   });
 }
 
+// ─── ENHANCV PDF GENERATION ──────────────────────────────────────────────────
+// Load saved API key from storage
+chrome.storage.local.get(['enhancv_api_key'], r => {
+  if (r.enhancv_api_key) {
+    document.getElementById('enhancv-api-key').value = r.enhancv_api_key;
+  }
+  updateEnhancvPreview();
+});
+
+// Save API key when typed
+document.getElementById('enhancv-api-key')?.addEventListener('input', e => {
+  const key = e.target.value.trim();
+  chrome.storage.local.set({ enhancv_api_key: key });
+  updateEnhancvPreview();
+});
+
+// Update Enhancv resume preview from current profile
+function updateEnhancvPreview() {
+  chrome.storage.local.get(['filly_profile'], r => {
+    const p = r.filly_profile || {};
+    const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' ') || '—';
+    const title = p.current_title || '—';
+    const parts = [];
+    if (p.current_company) parts.push(p.current_company);
+    if (p.years_of_experience) parts.push(`${p.years_of_experience}y exp`);
+    if (p.school) parts.push(p.school);
+    if (p.degree) parts.push(p.degree);
+    document.getElementById('ep-name').textContent = name;
+    document.getElementById('ep-title').textContent = title + (parts.length ? ' · ' + parts.join(' · ') : '');
+    document.getElementById('ep-sections').textContent = parts.length ? parts.join(' · ') : 'Fill your Profile tab first';
+  });
+}
+
+// Generate PDF via Enhancv API
+document.getElementById('btn-enhancv-generate')?.addEventListener('click', async () => {
+  const apiKey = document.getElementById('enhancv-api-key')?.value?.trim();
+  if (!apiKey) {
+    setEnhancvStatus('❌ API key required. Get it from app.enhancv.com → Profile → API Keys', 'err');
+    return;
+  }
+
+  if (!apiKey.startsWith('enh_live_') && !apiKey.startsWith('enh_test_')) {
+    setEnhancvStatus('❌ Invalid key format. Should start with enh_live_ or enh_test_', 'err');
+    return;
+  }
+
+
+  const btn = document.getElementById('btn-enhancv-generate');
+  btn.disabled = true;
+  btn.innerHTML = '<span>⏳</span><span>Generating PDF...</span>';
+  setEnhancvStatus('⏳ Creating resume via Enhancv API... (10–20s)', 'info');
+
+
+  try {
+    // Get profile + API key
+    const { filly_profile } = await new Promise(res => chrome.storage.local.get(['filly_profile'], res));
+    const profile = filly_profile || {};
+
+
+    if (!profile.first_name && !profile.email) {
+      throw new Error('Fill your Profile tab first (at least name or email)');
+    }
+
+
+    // Inject both parsers
+    await injectEnhancvClient();
+
+
+    // Convert profile → Enhancv schema
+    const schema = await new Promise((res, rej) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+        chrome.tabs.sendMessage(tabs[0].id, {
+          type: 'FILLY_TO_ENHANCV',
+          profile
+        }, resp => {
+          if (resp && resp.success) res(resp.schema);
+          else rej(new Error(resp?.error || 'Conversion failed'));
+        });
+      });
+    });
+
+    setEnhancvStatus('📄 Resume created, requesting PDF export (may take 15s)...', 'info');
+
+
+    // Call Enhancv API directly from content script (it has network access)
+    const result = await new Promise((res, rej) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+        chrome.tabs.sendMessage(tabs[0].id, {
+          type: 'FILLY_ENHANCV_PDF',
+          schema,
+          apiKey
+        }, resp => {
+          if (resp && resp.success) res(resp);
+          else rej(new Error(resp?.error || 'PDF generation failed'));
+        });
+      });
+    });
+
+
+    setEnhancvStatus(`✅ Resume PDF generated!
+
+📥 Downloading... check your downloads bar.`, 'ok');
+    btn.disabled = false;
+    btn.innerHTML = '<span>✨</span><span>Generate Resume PDF</span>';
+
+    // Trigger download
+    if (result.downloadUrl) {
+      const a = document.createElement('a');
+      a.href = result.downloadUrl;
+      a.download = result.filename || 'resume-enhancv.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
+  } catch (err) {
+    setEnhancvStatus(`❌ ${err.message}`, 'err');
+    btn.disabled = false;
+    btn.innerHTML = '<span>✨</span><span>Generate Resume PDF</span>';
+  }
+});
+
+function setEnhancvStatus(msg, type) {
+  const el = document.getElementById('enhancv-status');
+  if (!el) return;
+  el.className = `enhancv-status ${type}`;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+
+function injectEnhancvClient() {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+      // Check if already injected
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'FILLY_PING' }, resp => {
+        if (resp && resp.pong) { resolve(); return; }
+        // Inject enhancv-client.js
+        fetch(chrome.runtime.getURL('enhancv-client.js'))
+          .then(r => r.text())
+          .then(js => chrome.tabs.executeScript(tabs[0].id, { code: js }))
+          .then(() => { resolve(); })
+          .catch(err => reject(err));
+      });
+    });
+  });
+}
+
 // ─── CLOSE ────────────────────────────────────────────────────────────────────
 document.getElementById('close-btn')?.addEventListener('click', () => window.close());
 

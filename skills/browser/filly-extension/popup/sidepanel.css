@@ -360,6 +360,37 @@ body {
 .pr-section { font-weight: 600; margin-top: 6px; color: #2D3436; }
 .pr-item { padding: 2px 0; color: #636E72; }
 
+/* ── ENHANCV TAB ── */
+.ei-icon { font-size: 28px; text-align: center; }
+.ei-title { font-size: 13px; font-weight: 700; margin: 4px 0 2px; text-align: center; }
+.ei-desc { font-size: 11px; color: #636E72; text-align: center; margin-bottom: 10px; }
+.ei-hint { font-size: 10px; color: #636E72; margin-top: 3px; }
+.enhancv-preview {
+  background: #fff; border-radius: 10px; border: 1px solid #E8E8F0;
+  padding: 10px; margin-top: 8px;
+}
+.ep-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #A29BFE; font-weight: 600; margin-bottom: 6px; }
+.ep-name { font-weight: 700; font-size: 13px; color: #2D3436; }
+.ep-title { font-size: 11px; color: #636E72; margin: 2px 0 6px; }
+.ep-sections { font-size: 10px; color: #636E72; line-height: 1.5; }
+.btn-enhancv-generate {
+  width: 100%; padding: 9px; border: none; border-radius: 10px;
+  background: linear-gradient(135deg, #6C5CE7, #A29BFE);
+  color: #fff; font-size: 12px; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin-top: 10px; transition: transform 0.15s;
+}
+.btn-enhancv-generate:hover { transform: translateY(-1px); }
+.btn-enhancv-generate:active { transform: translateY(0); }
+.enhancv-status {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  font-size: 11px; text-align: center; line-height: 1.5;
+}
+.enhancv-status.ok { background: #E8F8F4; color: #00B894; border: 1px solid #00B894; }
+.enhancv-status.err { background: #FFF0EE; color: #E17055; border: 1px solid #E17055; }
+.enhancv-status.info { background: #E8F0FF; color: #0984E3; border: 1px solid #74B9FF; }
+.enhancv-note { font-size: 10px; color: #E17055; text-align: center; margin-top: 6px; }
+
 /* ── HEADER ACTIONS ── */
 .filly-logo-area { display: flex; align-items: center; gap: 8px; flex: 1; }
 .platform-badge { display: flex; align-items: center; gap: 3px; padding: 3px 8px; border-radius: 10px; background: rgba(255,255,255,0.2); font-size: 10px; color: rgba(255,255,255,0.9); }
