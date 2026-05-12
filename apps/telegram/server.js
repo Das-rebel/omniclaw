@@ -166,7 +166,7 @@ async function handleStart(chatId, fromName) {
 async function handleHelp(chatId) {
   await tg('sendMessage', {
     chat_id: chatId,
-    text: '🦞 OmniClaw Bot\n\n/start - Welcome\n/help - This message\n/status - Cloud endpoints health\n/vault <query> - Search knowledge graph\n/sync - Twitter & Instagram sync status\n/tts <text> - Text to speech\n/story <prompt> - Generate a story\n/search <query> - Web search\n/ask <question> - Ask AI agent\n/remind <time> <text> - Set reminder',
+    text: '🦞 OmniClaw Bot\n\n/start - Welcome\n/help - This message\n/status - Cloud endpoints health\n/vault <query> - Search knowledge graph\n/sync - Twitter & Instagram sync status\n/tts <text> - Text to speech\n/story <prompt> - Generate a story\n/search <query> - Wikipedia search\n/ask <question> - Ask AI agent\n/remind <time> <text> - Set reminder',
   });
 }
 
@@ -261,83 +261,49 @@ async function handleSync(chatId) {
 }
 
 async function handleGrowthOS(chatId, text) {
-  const { exec } = require('child_process');
-  const { promisify } = require('util');
-  const execAsync = promisify(exec);
-  const fs = require('fs');
-
-  // Determine mode
+  const DASHBOARD = 'https://growth-os-o36e7noe5a-el.a.run.app';
   const mode = text.replace(/^\/growthos\s*/i, '').trim().toLowerCase();
-
-  if (mode === 'run') {
-    await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
-    await tg('sendMessage', { chat_id: chatId, text: '🧠 Running Growth OS pipeline...\n\nUse /growthos digest for a quick status.' });
-    const { stdout, stderr } = await execAsync(
-      'cd /Users/Subho/growth-workflow-os && python3 run_pipeline.py 2>&1',
-      { timeout: 300000 }
-    );
-    const match = stdout.match(/stored (\d+) signals/);
-    const count = match ? match[1] : '?';
-    await tg('sendMessage', { chat_id: chatId, text: '✅ Pipeline done! Stored ' + count + ' signals.\n\n🌐 http://localhost:8501' });
-    return;
-  }
-
   if (mode === 'digest') {
-    await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
-    const { stdout } = await execAsync(
-      'cd /Users/Subho/growth-workflow-os && timeout 90 python3 run_digest.py 2>&1',
-      { timeout: 120000 }
-    );
-    // Parse summary
-    const topMatch = stdout.match(/\*\*(Today\'s Top Signal|today\'s signal)\*\*[\s\S]{0,300}/i);
-    const topSignal = topMatch ? topMatch[0].slice(0, 200) : '';
-    await tg('sendMessage', {
-      chat_id: chatId,
-      text: '📊 *Growth OS Daily Digest*\n\n' + (topSignal || 'Run /growthos run for full pipeline.') + '\n\n🌐 http://localhost:8501',
-      disable_web_page_preview: true,
-    });
-    return;
+    return tg('sendMessage', { chat_id: chatId, text: '📊 *Growth OS Digest*\n\n🌐 ' + DASHBOARD, parse_mode: 'Markdown', disable_web_page_preview: true });
   }
-
-  // Default: status summary
-  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
-  const { stdout: dryRun } = await execAsync(
-    'cd /Users/Subho/growth-workflow-os && python3 run_daily.py --dry-run 2>&1',
-    { timeout: 60000 }
-  );
-  const sigMatch = dryRun.match(/(?:TOTAL|total)\s+(\d+)\s+signals/);
-  const signalCount = sigMatch ? sigMatch[1] : '?';
-
-  const memoDir = '/Users/Subho/growth-workflow-os/operating_memos/output';
-  let memoStatus = 'No memo';
-  if (fs.existsSync(memoDir)) {
-    const files = fs.readdirSync(memoDir).filter(f => f.startsWith('weekly_memo_') || f.startsWith('daily_digest_')).sort().reverse();
-    if (files.length > 0) {
-      const stat = fs.statSync(memoDir + '/' + files[0]);
-      memoStatus = files[0].replace('weekly_memo_', '').replace('daily_digest_', '').replace('.md', '') + ' (' + Math.round(stat.size / 1024) + 'KB)';
-    }
-  }
-
-  const dbPath = '/Users/Subho/growth-workflow-os/strategic_memory/growth_os.db';
-  let totalDb = '?';
-  if (fs.existsSync(dbPath)) {
-    const { stdout: sqliteOut } = await execAsync('sqlite3 ' + dbPath + ' "SELECT COUNT(*) FROM signals"');
-    totalDb = sqliteOut.trim();
-  }
-
-  await tg('sendMessage', {
-    chat_id: chatId,
-    text: '🧠 *Growth OS Status*\n\n' +
-      '📡 Last run: *' + signalCount + '* signals\n' +
-      '💾 DB total: *' + totalDb + '* signals\n' +
-      '📝 Latest memo: *' + memoStatus + '*\n' +
-      '🌐 Dashboard: http://localhost:8501\n\n' +
-      '/growthos run - Full pipeline\n' +
-      '/growthos digest - Daily digest\n' +
-      '/growthos signals - Latest signals',
-    disable_web_page_preview: true,
-  });
+  return tg('sendMessage', { chat_id: chatId, text: '🧠 *Growth OS*\n\n🌐 ' + DASHBOARD + '\n\n/growthos digest - Daily digest', parse_mode: 'Markdown', disable_web_page_preview: true });
 }
+app.get('/growthos', async (_req, res) => {
+  res.json({
+    status: 'ok',
+    dashboard_url: GROWTH_OS_CLOUD,
+    message: 'Growth OS is running on cloud. Access the dashboard at the URL above.',
+  });
+});
+
+app.get('/growthos/signals', async (_req, res) => {
+  res.json({
+    signals_url: GROWTH_OS_CLOUD,
+    message: 'View signals on the Growth OS dashboard at ' + GROWTH_OS_CLOUD,
+  });
+});
+
+app.get('/growthos/digest', async (_req, res) => {
+  res.json({
+    digest_url: GROWTH_OS_CLOUD,
+    message: 'View the daily digest on the Growth OS dashboard at ' + GROWTH_OS_CLOUD,
+  });
+});
+
+app.post('/growthos/run', async (_req, res) => {
+  res.json({
+    ok: true,
+    message: 'Growth OS pipeline runs on cloud deployment at ' + GROWTH_OS_CLOUD,
+    dashboard_url: GROWTH_OS_CLOUD,
+  });
+});
+
+app.get('/growthos-status', async (_req, res) => {
+  res.json({
+    dashboard_url: GROWTH_OS_CLOUD,
+    message: 'Growth OS cloud deployment at ' + GROWTH_OS_CLOUD,
+  });
+});
 
 // ─── /tts - Text to speech ─────────────────────────
 async function handleTTS(chatId, text) {
@@ -392,29 +358,25 @@ async function handleStory(chatId, text) {
   }
 }
 
-// ─── /search - Web search ─────────────────────────
+// ─── /search - Web search via Wikipedia ────────
 async function handleSearch(chatId, text) {
   const query = text.replace(/^\/search\s*/i, '').trim();
   if (!query) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /search <query>\nWeb search via Tavily.' });
+    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /search <query>\nWeb search (Wikipedia).' });
   }
   await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
   try {
-    const res = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: process.env.TAVILY_API_KEY, query, search_depth: 'basic' }),
-    });
-    if (!res.ok) throw new Error('Search failed');
+    const url = 'https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=' + encodeURIComponent(query) + '&format=json&origin=*';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Wikipedia fetch failed');
     const data = await res.json();
-    const results = (data.results || []).slice(0, 5);
-    if (!results.length) return tg('sendMessage', { chat_id: chatId, text: 'No results for: ' + query });
-    const lines = ['🔍 *Web Search*: ' + query + '\n'];
+    const results = (data.query?.search || []).slice(0, 5);
+    if (!results.length) return tg('sendMessage', { chat_id: chatId, text: 'No Wikipedia results for: ' + query });
+    const lines = ['🔍 *Wikipedia*: ' + query + '\n'];
     for (const r of results) {
       const title = r.title || 'Result';
-      const url = r.url || '';
-      const snippet = (r.content || '').slice(0, 100);
-      lines.push('📌 *' + title + '*\n' + snippet + '...\n🔗 ' + url + '\n');
+      const snippet = (r.snippet || '').replace(/<[^>]+>/g, '').slice(0, 100);
+      lines.push('📌 *' + title + '*\n' + snippet + '\n🔗 https://en.wikipedia.org/wiki/' + encodeURIComponent(title.replace(/ /g, '_')) + '\n');
     }
     await tg('sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown', disable_web_page_preview: true });
   } catch(e) {
@@ -422,30 +384,24 @@ async function handleSearch(chatId, text) {
   }
 }
 
-// ─── /ask - AI agent ──────────────────────────────
-const { getAgentRouter } = require('./src/agent_router');
-let _agentRouter = null;
-function getRouter() {
-  if (!_agentRouter) _agentRouter = getAgentRouter({ endpoint: 'http://localhost:18789' });
-  return _agentRouter;
+// ─── /ask - AI agent (keyword fallback) ─────────
+const AGENT_PATTERNS = [
+  { trigger: /\b(status|health|system)\b/i, response: '🟢 OmniClaw running. Try /status for full health check.' },
+  { trigger: /\bhelp\b/i, response: '📋 /help for all commands\n/vault <query> - Search knowledge graph' },
+  { trigger: /\b(hi|hello|hey)\b/i, response: '👋 Hi! OmniClaw here. Try /vault <query> to search your knowledge graph.' },
+  { trigger: /\b(time|date|now)\b/i, response: '🕐 ' + new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) },
+  { trigger: /\b(twitter|instagram|sync)\b/i, response: '🐦📷 Social syncs active. Use /sync for status.' },
+  { trigger: /\b(vault|search|bookmark)\b/i, response: '🔍 /vault <query> searches your knowledge graph.\nExample: /vault AI agents' },
+];
+function agentFallback(text) {
+  for (const p of AGENT_PATTERNS) if (p.trigger.test(text)) return p.response;
+  return '🤖 Ask me about anything!\n• /vault <query> - Search bookmarks\n• /status - System health\n• /help - All commands';
 }
 async function handleAgent(chatId, text) {
   const query = text.replace(/^\/(ask|agent)\s*/i, '').trim();
-  if (!query) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /ask <question>\nAsk the AI agent.' });
-  }
+  if (!query) return tg('sendMessage', { chat_id: chatId, text: 'Usage: /ask <question>\nAI agent (keyword mode).' });
   await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
-  try {
-    const router = getRouter();
-    const response = await Promise.race([
-      router.callAgent(query, { chatId }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 60000))
-    ]);
-    const truncated = (response || '').slice(0, 4000);
-    await tg('sendMessage', { chat_id: chatId, text: truncated });
-  } catch(e) {
-    await tg('sendMessage', { chat_id: chatId, text: 'Agent error: ' + e.message });
-  }
+  await tg('sendMessage', { chat_id: chatId, text: agentFallback(query) });
 }
 
 // ─── /remind - Reminder ─────────────────────────
