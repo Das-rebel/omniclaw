@@ -166,7 +166,7 @@ async function handleStart(chatId, fromName) {
 async function handleHelp(chatId) {
   await tg('sendMessage', {
     chat_id: chatId,
-    text: '🦞 OmniClaw Bot\n\n/start - Welcome\n/help - This message\n/status - Cloud endpoints health\n/vault <query> - Search knowledge graph\n/sync - Twitter & Instagram sync status\n/tts <text> - Text to speech\n/story <prompt> - Generate a story\n/search <query> - Wikipedia search\n/ask <question> - Ask AI agent\n/remind <time> <text> - Set reminder',
+    text: '🦞 OmniClaw Bot\n\n/start - Welcome\n/help - This message\n/status - Cloud endpoints health\n/vault <query> - Search knowledge graph\n/sync - Twitter & Instagram sync status\n/story <prompt> - Generate a story\n/search <query> - Wikipedia search\n/remind <time> <text> - Set reminder',
   });
 }
 
@@ -175,8 +175,7 @@ async function handleStatus(chatId) {
   const checks = await Promise.all([
     checkEndpoint('omniclaw'), checkEndpoint('vaultSearch'),
     checkEndpoint('twitterSync'), checkEndpoint('instagram'),
-    checkEndpoint('tts'), checkEndpoint('story'),
-    checkEndpoint('alexa'), checkEndpoint('bookmarks'),
+    checkEndpoint('story'), checkEndpoint('bookmarks'),
   ]);
   const lines = checks.map(c =>
     (c.ok ? '✅' : '❌') + ' ' + c.name + ': ' + (c.ok ? c.status : c.error)
@@ -479,10 +478,10 @@ async function handleMessage(msg) {
   if (text.startsWith('/vault') || text.startsWith('/vault@' + BOT_USERNAME)) return handleVault(chatId, text);
   if (text.startsWith('/sync') || text.startsWith('/sync@' + BOT_USERNAME)) return handleSync(chatId);
   if (text.startsWith('/growthos') || text.startsWith('/growthos@' + BOT_USERNAME)) return handleGrowthOS(chatId, text);
-  if (text.startsWith('/tts') || text.startsWith('/tts@' + BOT_USERNAME)) return handleTTS(chatId, text);
+//   if (text.startsWith('/tts') || text.startsWith('/tts@' + BOT_USERNAME)) return handleTTS(chatId, text);
   if (text.startsWith('/story') || text.startsWith('/story@' + BOT_USERNAME)) return handleStory(chatId, text);
   if (text.startsWith('/search') || text.startsWith('/search@' + BOT_USERNAME)) return handleSearch(chatId, text);
-  if (text.startsWith('/ask') || text.startsWith('/ask@' + BOT_USERNAME)) return handleAgent(chatId, text);
+//   if (text.startsWith('/ask') || text.startsWith('/ask@' + BOT_USERNAME)) return handleAgent(chatId, text);
   if (text.startsWith('/remind') || text.startsWith('/remind@' + BOT_USERNAME)) return handleRemind(chatId, text);
 
   // Skip other /commands
