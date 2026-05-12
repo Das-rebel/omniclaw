@@ -144,13 +144,18 @@ class VaultIntegration {
       if (!items.length) return { query, results: [], count: 0 };
 
       const formatted = items.slice(0, 5).map(item => ({
-        title: item.title?.slice(0, 60) || 'Untitled',
-        url: item.url || item.link || '',
+        title: item.title || item.name || 'Untitled',
+        url: item.url || '',
         source: item.source || 'unknown',
-        date: item.bookmarked_at || item.date || '',
-        snippet: item.content?.slice(0, 120) || item.text?.slice(0, 120) || ''
+        date: item.date || item.postDate || item.bookmarked_at || '',
+        snippet: item.snippet || item.caption?.slice(0, 120) || item.content?.slice(0, 120) || '',
+        tags: item.tags || item.vlTags || [],
+        location: item.location || '',
+        colabSummary: item.colabSummary || '',
+        aestheticScore: item.aestheticScore || 0,
+        vlStyle: item.vlStyle || '',
+        vlMood: item.vlMood || '',
       }));
-
       return { query, results: formatted, count: items.length };
     } catch (err) {
       logger.error('Vault search error:', err.message);
@@ -261,23 +266,63 @@ class VaultIntegration {
     }
   }
 
-  /** Format vault results for Telegram */
+  /** Format vault results for Telegram with rich aesthetic formatting */
   formatVaultResults(results, query) {
     if (!results || !results.results || !results.results.length) {
       return `No results found for "${query}" in vault.`;
     }
 
-    let response = `🔍 *Vault search for:* "${query}"\n`;
-    response += `📊 *Found:* ${results.count || results.results.length} results\n\n`;
+    let response = `🔍 Vault: "${query}" (${results.count || results.results.length} results)\n\n`;
 
     for (const item of results.results) {
-      const title = item.title || 'Untitled';
-      const source = item.source === 'twitter' ? '🐦 Twitter' : item.source === 'instagram' ? '📷 Instagram' : '🌐';
+      const srcIcon = item.source === 'twitter' ? '🐦' : item.source === 'instagram' ? '📷' : '🌐';
+      const srcLabel = item.source === 'twitter' ? 'Twitter' : item.source === 'instagram' ? 'Instagram' : 'Web';
+      const title = (item.title || 'Untitled').slice(0, 55);
+      const url = item.url || '';
+      const snippet = (item.snippet || '').slice(0, 100);
+      const tags = item.tags || [];
+      const location = item.location || '';
+      const colabSummary = item.colabSummary || '';
+      const aesthetic = item.aestheticScore || 0;
+      const vlStyle = item.vlStyle || '';
+      const vlMood = item.vlMood || '';
       const date = item.date ? item.date.slice(0, 10) : '';
-      const snippet = item.snippet ? `\n   _${item.snippet.slice(0, 80)}..._` : '';
 
-      response += `${source} [${title}](${item.url || item.link || '#'})${snippet}\n`;
-      if (date) response += `   📅 ${date}\n`;
+      // Header
+      response += `${srcIcon} ${title}\n`;
+
+      // Aesthetic score for Instagram
+      if (item.source === 'instagram' && aesthetic > 0) {
+        const stars = '⭐'.repeat(Math.min(Number(aesthetic), 5));
+        response += `   ${stars}\n`;
+      }
+
+      // Snippet
+      if (snippet) response += `   "${snippet}..."\n`;
+
+      // Location for Instagram
+      if (location) response += `   📍 ${location}\n`;
+
+      // Source, date, URL
+      const metaParts = [srcLabel];
+      if (date) metaParts.push(`📅 ${date}`);
+      response += `   ${metaParts.join(' | ')}\n`;
+      if (url) response += `   🔗 ${url}\n`;
+
+      // Tags
+      if (tags.length > 0) response += `   🏷 ${tags.slice(0, 4).join(', ')}\n`;
+
+      // Style and mood for Instagram
+      if (vlStyle || vlMood) {
+        const styleParts = [];
+        if (vlStyle) styleParts.push(`🎨 ${vlStyle}`);
+        if (vlMood) styleParts.push(`💭 ${vlMood}`);
+        response += `   ${styleParts.join(' | ')}\n`;
+      }
+
+      // AI summary
+      if (colabSummary) response += `   💡 ${colabSummary.slice(0, 80)}\n`;
+
       response += '\n';
     }
 

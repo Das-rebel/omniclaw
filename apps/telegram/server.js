@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * OmniClaw Telegram Bot — Manual webhook (no Telegraf, no node-telegram-bot-api)
+ * OmniClaw Telegram Bot - Manual webhook (no Telegraf, no node-telegram-bot-api)
  * Uses raw Express + fetch to Telegram API.
  * This eliminates ALL library webhook conflicts.
  */
@@ -106,20 +106,27 @@ function enrichResult(fr, lookup) {
     meta = lookup[suffix];
   }
   if (!meta) {
-    // Try matching on any source_id containing parts of the id
     for (const k of Object.keys(lookup)) {
       if (fid.includes(k) || k.includes(fid)) { meta = lookup[k]; break; }
     }
   }
-  const tags = fr.vlTags || [];
+  const vlTags = fr.vlTags || [];
   return {
+    // Basic fields
     name: (fr.name || 'Untitled').replace(/\n/g, ' ').trim().slice(0, 60),
-    url: meta ? meta.url : '',
-    source: meta ? meta.source : (fid.startsWith('tw_') ? 'twitter' : fid.startsWith('ig_') ? 'instagram' : 'unknown'),
-    date: meta ? meta.date : '',
+    url: fr.url || meta?.url || '',
+    source: fr.source || meta?.source || (fid.startsWith('tw_') ? 'twitter' : fid.startsWith('ig_') ? 'instagram' : 'unknown'),
+    date: fr.date || meta?.date || '',
     caption: (fr.caption || '').replace(/\n/g, ' ').trim().slice(0, 120),
     score: fr.score,
-    tags: tags.slice(0, 5),
+    // Rich formatting fields
+    vlTags: vlTags,  // Keep vlTags name for handleVault compatibility
+    tags: vlTags,     // Also expose as tags
+    location: fr.location || meta?.location || '',
+    colabSummary: fr.colabSummary || '',
+    aestheticScore: fr.aestheticScore || meta?.aestheticScore || 0,
+    vlStyle: fr.vlStyle || '',
+    vlMood: fr.vlMood || '',
   };
 }
 
@@ -151,7 +158,7 @@ async function handleStart(chatId, fromName) {
   console.log('👋 /start from ' + fromName + ' chat=' + chatId);
   const r = await tg('sendMessage', {
     chat_id: chatId,
-    text: 'Hey ' + fromName + '! 🦞\n\nI\'m OmniClaw — your AI assistant.\n\nType /help for commands!',
+    text: 'Hey ' + fromName + '! 🦞\n\nI\'m OmniClaw - your AI assistant.\n\nType /help for commands!',
   });
   console.log(r.ok ? '✅ Replied /start' : '❌ Reply failed: ' + JSON.stringify(r));
 }
@@ -159,7 +166,7 @@ async function handleStart(chatId, fromName) {
 async function handleHelp(chatId) {
   await tg('sendMessage', {
     chat_id: chatId,
-    text: '🦞 OmniClaw Bot\n\n/start — Welcome\n/help — This message\n/status — Cloud endpoints health\n/vault <query> — Search knowledge graph\n/sync — Twitter & Instagram sync status',
+    text: '🦞 OmniClaw Bot\n\n/start - Welcome\n/help - This message\n/status - Cloud endpoints health\n/vault <query> - Search knowledge graph\n/sync - Twitter & Instagram sync status',
   });
 }
 
@@ -192,17 +199,50 @@ async function handleVault(chatId, text) {
   for (const item of items) {
     const srcIcon = item.source === 'twitter' ? '🐦' : item.source === 'instagram' ? '📷' : '🌐';
     const srcLabel = item.source === 'twitter' ? 'Twitter' : item.source === 'instagram' ? 'Instagram' : 'Web';
-    const name = (item.name || 'Untitled').slice(0, 50);
-    const date = item.date ? item.date.slice(0, 10) : '';
-    const tags = (item.tags || []).slice(0, 4).join(', ');
+    const name = (item.name || 'Untitled').slice(0, 55);
+    const url = item.url || '';
+    const caption = item.caption || '';
+    const tags = item.vlTags || item.tags || [];
+    const location = item.location || '';
+    const colabSummary = item.colabSummary || '';
+    const aestheticScore = item.aestheticScore || 0;
+    const vlStyle = item.vlStyle || '';
+    const vlMood = item.vlMood || '';
+    const date = item.date || '';
 
     lines.push(srcIcon + ' ' + name);
-    if (item.url) lines.push('🔗 ' + item.url);
+
+    // Aesthetic score for Instagram
+    if (item.source === 'instagram' && aestheticScore > 0) {
+      lines.push('   ' + '⭐'.repeat(Math.min(Number(aestheticScore), 5)));
+    }
+
+    // Caption snippet
+    if (caption) lines.push('   "' + caption.slice(0, 100) + '..."');
+
+    // Location
+    if (location) lines.push('   📍 ' + location);
+
+    // Source, date, URL
     const meta = [srcLabel];
-    if (date) meta.push('📅 ' + date);
-    if (tags) meta.push('🏷 ' + tags);
-    lines.push(meta.join(' | '));
-    if (item.caption) lines.push('"' + item.caption.slice(0, 100) + '…"');
+    if (date) meta.push('📅 ' + date.slice(0, 10));
+    if (url) meta.push('🔗 ' + url);
+    lines.push('   ' + meta.join(' | '));
+
+    // Tags
+    if (tags.length > 0) lines.push('   🏷 ' + tags.slice(0, 4).join(', '));
+
+    // Style and mood
+    if (vlStyle || vlMood) {
+      const styleParts = [];
+      if (vlStyle) styleParts.push('🎨 ' + vlStyle);
+      if (vlMood) styleParts.push('💭 ' + vlMood);
+      lines.push('   ' + styleParts.join(' | '));
+    }
+
+    // AI summary
+    if (colabSummary) lines.push('   💡 ' + colabSummary.slice(0, 80));
+
     lines.push('');
   }
 
@@ -292,9 +332,9 @@ async function handleGrowthOS(chatId, text) {
       '💾 DB total: *' + totalDb + '* signals\n' +
       '📝 Latest memo: *' + memoStatus + '*\n' +
       '🌐 Dashboard: http://localhost:8501\n\n' +
-      '/growthos run — Full pipeline\n' +
-      '/growthos digest — Daily digest\n' +
-      '/growthos signals — Latest signals',
+      '/growthos run - Full pipeline\n' +
+      '/growthos digest - Daily digest\n' +
+      '/growthos signals - Latest signals',
     disable_web_page_preview: true,
   });
 }
@@ -366,7 +406,7 @@ app.post('/webhook', async (req, res) => {
     console.error('getMe failed: ' + JSON.stringify(me));
   }
 
-  // No webhook — we're using POLLING to bypass the broken GCS tunnel.
+  // No webhook - we're using POLLING to bypass the broken GCS tunnel.
   // Delete webhook so pending updates accumulate for polling.
   const del = await tg('deleteWebhook', { drop_pending_updates: false });
   console.log('🗑 Deleted webhook (using polling): ' + (del.ok ? '✅' : del.description));
