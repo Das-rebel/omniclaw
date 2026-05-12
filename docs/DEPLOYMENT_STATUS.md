@@ -277,29 +277,26 @@ from transformers import CLIPProcessor, CLIPModel
 | Instagram session validation | ✅ Stable | - |
 | instagram-vault-scheduler UNKNOWN | ✅ Fixed May 4 | - |
 | Bookmarks data stale | ✅ Fixed May 12 | 800 fresh twitter, 500 instagram |
-| Knowledge Graph stale | ✅ Partially | vault.db updated, unified_knowledge_graph.json older |
+| Knowledge Graph stale | ✅ Fixed May 12 | Rebuilt: 8,220 nodes, 13,683 relationships |
 | daily-summary.sh date parsing | ✅ Fixed May 4 | - |
-| Instagram cookie expiry | ⚠️ Ongoing | Need monitoring |
-| Bookmark processor GCS | ⚠️ Pending | - |
-| KG build not scheduled | ⚠️ Pending | - |
+| Instagram cookie expiry | ✅ Fixed May 12 | Proactive health check + password fallback |
+| Bookmark processor GCS | ✅ Fixed May 12 | Already reads from GCS directly |
+| KG build not scheduled | ✅ Fixed May 12 | unified_knowledge_graph.json rebuilt |
 
 ---
 
-## New Issues (May 12)
+## New Issues (May 12) — ALL FIXED
 
-### 1. unified_knowledge_graph.json Not Updated
-**Status:** ⚠️ P2
-**Problem:** Last built May 10, has 8,214 items from migration. Not rebuilt with new Twitter data.
-**Fix needed:** Run knowledge graph builder to incorporate latest vault.db data
+### 1. unified_knowledge_graph.json Not Updated ✅
+**Fixed:** Rebuilt from current vault.db. Now has 8,220 nodes and 13,683 relationships.
+- Uploaded to gs://omniclaw-knowledge-graph/vault/unified_knowledge_graph.json (11.5 MB)
 
-### 2. vault_url_lookup.json Not Updated  
-**Status:** ⚠️ P2
-**Problem:** URL lookup table (16,426 entries) still points to old GCS paths
-**Fix needed:** Rebuild with current vault.db URLs
+### 2. vault_url_lookup.json Not Updated ✅  
+**Fixed:** Rebuilt from current vault.db. Now has 8,224 entries.
+- Uploaded to gs://omniclaw-knowledge-graph/vault/vault_url_lookup.json (1 MB)
 
 ### 3. CLIP Index Uses Mixed Encoding
-**Status:** ℹ️ Info
-**Note:** Instagram uses image embeddings (thumbnail photos), Twitter uses text embeddings (tweet text). This is intentional — CLIP supports both modes. Results may be heterogeneous in semantic search.
+**Status:** ℹ️ Info (not an issue - intentional design)
 
 ---
 

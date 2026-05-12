@@ -500,8 +500,44 @@ def _do_sync(force_refresh=False, send_summary=True):
         _write_sync_summary(result, send_summary)
         return result
 
-    # --- Step 3: Fetch saved posts ---
-    log(f"Authenticated via {auth_method}, fetching saved posts...")
+    # --- Step 3: Proactive session health check before scrape ---
+    log(f"Authenticated via {auth_method}, checking session health...")
+    try:
+        cl.user_info(cl.user_id)  # Private endpoint = valid session
+        log("Session health check: OK")
+    except Exception as hc_err:
+        hc_err_str = str(hc_err).lower()
+        if any(kw in hc_err_str for kw in ["login", "403", "401", "challenge", "checkpoint"]):
+            log(f"Session health check FAILED: {hc_err}")
+            # Session is dead — try password fallback before failing completely
+            if auth_method == "gcs_cookies" and INSTAGRAM_PASSWORD:
+                log("Cookies appear dead, trying password login as health repair...")
+                try:
+                    cl2 = _create_client()
+                    _init_session_with_password(cl2)
+                    auth_method = "password_fallback"
+                    posts = _scrape_saved_posts(cl2)
+                    cl = cl2
+                except Exception as pw_err:
+                    log(f"Password fallback FAILED during health repair: {pw_err}")
+                    return {
+                        "success": False,
+                        "error": f"Session dead and password fallback failed: {pw_err}",
+                        "source": "session_dead_password_failed",
+                        "count": 0,
+                    }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Instagram session appears expired: {hc_err}. Upload fresh cookies to GCS.",
+                    "source": auth_method,
+                    "count": 0,
+                }
+        else:
+            log(f"Session health check threw unexpected error (continuing anyway): {hc_err}")
+
+    # --- Step 4: Fetch saved posts ---
+    log(f"Fetching saved posts via {auth_method}...")
     try:
         posts = _scrape_saved_posts(cl)
     except Exception as e:
