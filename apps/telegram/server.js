@@ -8,6 +8,7 @@
 require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
+const { TavilyClient } = require('../../clients/tavily_client');
 
 const { getAgentRouter } = require('./src/agent_router');
 
@@ -168,7 +169,7 @@ async function handleStart(chatId, fromName) {
 async function handleHelp(chatId) {
   await tg('sendMessage', {
     chat_id: chatId,
-    text: '🦞 OmniClaw Bot\n\n/start - Welcome\n/help - This message\n/status - Cloud endpoints health\n/vault <query> - Search knowledge graph\n/sync - Twitter & Instagram sync status\n/ask <question> - Ask the AI agent',
+    text: '🦞 OmniClaw Bot\n\n/start - Welcome\n/help - This message\n/status - Cloud endpoints health\n/vault <query> - Search knowledge graph\n/sync - Twitter & Instagram sync status\n/tts <text> - Text to celebrity speech\n/story <prompt> - Generate a short story\n/search <query> - Web search\n/ask <question> - Ask the AI agent',
   });
 }
 
@@ -260,6 +261,93 @@ async function handleSync(chatId) {
     chat_id: chatId,
     text: '🔄 Sync Status\n\n🐦 Twitter: ' + (tw.ok ? '✅ healthy' : '❌ ' + tw.error) + '\n📷 Instagram: ' + (ig.ok ? '✅ healthy' : '❌ ' + ig.error),
   });
+}
+
+async function handleTTS(chatId, text) {
+  const ttsText = text.replace(/^\/tts\s*/, '').trim();
+  if (!ttsText) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /tts <text>\nConverts text to celebrity speech.' });
+  }
+  if (ttsText.length > 500) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Text too long (max 500 chars).' });
+  }
+
+  await tg('sendChatAction', { chat_id: chatId, action: 'record_audio' });
+  try {
+    const res = await fetch(EP.tts + '/synthesize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: ttsText, celebrity: 'morgan_freeman', language: 'en' }),
+    });
+    if (!res.ok) throw new Error('TTS endpoint returned ' + res.status);
+    const data = await res.json();
+    if (!data.audio) throw new Error('No audio in response');
+
+    const audioBuffer = Buffer.from(data.audio, 'hex');
+    // Save to temp file for upload
+    const tmpPath = '/tmp/tts_output_' + Date.now() + '.wav';
+    require('fs').writeFileSync(tmpPath, audioBuffer);
+
+    // Send voice message via multipart/form-data
+    const formData = new FormData();
+    formData.append('chat_id', chatId);
+    formData.append('voice', new Blob([audioBuffer], { type: 'audio/wav' }), 'tts.wav');
+
+    const uploadRes = await fetch(TG_API + '/sendVoice', {
+      method: 'POST',
+      body: formData,
+    });
+    const uploadData = await uploadRes.json();
+    if (!uploadData.ok) {
+      await tg('sendMessage', { chat_id: chatId, text: 'TTS generated but failed to send: ' + uploadData.description });
+    } else {
+      await tg('sendMessage', { chat_id: chatId, text: '🎤 Morgan Freeman: "' + ttsText.slice(0, 60) + (ttsText.length > 60 ? '...' : '') + '"' });
+    }
+  } catch (e) {
+    console.error('TTS error: ' + e.message);
+    await tg('sendMessage', { chat_id: chatId, text: '❌ TTS failed: ' + e.message });
+  }
+}
+
+async function handleStory(chatId, text) {
+  const prompt = text.replace(/^\/story\s*/, '').trim();
+  if (!prompt) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /story <prompt>\nGenerate a short story.' });
+  }
+  if (prompt.length > 1000) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Prompt too long (max 1000 chars).' });
+  }
+
+  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+  try {
+    const res = await fetch(EP.story + '/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, language: 'en' }),
+    });
+    if (!res.ok) throw new Error('Story endpoint returned ' + res.status);
+    const data = await res.json();
+
+    // Extract story text - handle various response shapes
+    let storyText = '';
+    if (typeof data === 'string') {
+      storyText = data;
+    } else if (data.story || data.content || data.text) {
+      storyText = data.story || data.content || data.text;
+    } else if (data.title && data.body) {
+      storyText = '📖 *' + data.title + '*\n\n' + (data.body.slice ? data.body : JSON.stringify(data.body));
+    } else {
+      // Try to serialize the whole response sensibly
+      storyText = JSON.stringify(data).slice(0, 2000);
+    }
+
+    if (storyText.length > 4000) storyText = storyText.slice(0, 3990) + '...';
+
+    await tg('sendMessage', { chat_id: chatId, text: '📖 *Story Generator*\n\n' + storyText, parse_mode: 'Markdown', disable_web_page_preview: true });
+  } catch (e) {
+    console.error('Story error: ' + e.message);
+    await tg('sendMessage', { chat_id: chatId, text: '❌ Story generation failed: ' + e.message });
+  }
 }
 
 async function handleAgent(chatId, text) {
@@ -383,6 +471,8 @@ async function handleMessage(msg) {
   if (text.startsWith('/vault') || text.startsWith('/vault@' + BOT_USERNAME)) return handleVault(chatId, text);
   if (text.startsWith('/sync') || text.startsWith('/sync@' + BOT_USERNAME)) return handleSync(chatId);
   if (text.startsWith('/growthos') || text.startsWith('/growthos@' + BOT_USERNAME)) return handleGrowthOS(chatId, text);
+  if (text.startsWith('/tts') || text.startsWith('/tts@' + BOT_USERNAME)) return handleTTS(chatId, text);
+  if (text.startsWith('/story') || text.startsWith('/story@' + BOT_USERNAME)) return handleStory(chatId, text);
 
   // Skip other /commands (but allow /agent and /ask)
   if (text.startsWith('/') && !text.startsWith('/agent') && !text.startsWith('/ask')) return;
