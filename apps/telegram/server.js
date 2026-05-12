@@ -8,9 +8,6 @@
 require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
-const { TavilyClient } = require('../../clients/tavily_client');
-
-const { getAgentRouter } = require('./src/agent_router');
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -169,7 +166,7 @@ async function handleStart(chatId, fromName) {
 async function handleHelp(chatId) {
   await tg('sendMessage', {
     chat_id: chatId,
-    text: '🦞 OmniClaw Bot\n\n/start - Welcome\n/help - This message\n/status - Cloud endpoints health\n/vault <query> - Search knowledge graph\n/sync - Twitter & Instagram sync status\n/tts <text> - Text to celebrity speech\n/story <prompt> - Generate a short story\n/search <query> - Web search\n/ask <question> - Ask the AI agent',
+    text: '🦞 OmniClaw Bot\n\n/start - Welcome\n/help - This message\n/status - Cloud endpoints health\n/vault <query> - Search knowledge graph\n/sync - Twitter & Instagram sync status\n/tts <text> - Text to speech\n/story <prompt> - Generate a story\n/search <query> - Web search\n/ask <question> - Ask AI agent\n/remind <time> <text> - Set reminder',
   });
 }
 
@@ -263,166 +260,6 @@ async function handleSync(chatId) {
   });
 }
 
-async function handleTTS(chatId, text) {
-  const ttsText = text.replace(/^\/tts\s*/, '').trim();
-  if (!ttsText) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /tts <text>\nConverts text to celebrity speech.' });
-  }
-  if (ttsText.length > 500) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Text too long (max 500 chars).' });
-  }
-
-  await tg('sendChatAction', { chat_id: chatId, action: 'record_audio' });
-  try {
-    const res = await fetch(EP.tts + '/synthesize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: ttsText, celebrity: 'morgan_freeman', language: 'en' }),
-    });
-    if (!res.ok) throw new Error('TTS endpoint returned ' + res.status);
-    const data = await res.json();
-    if (!data.audio) throw new Error('No audio in response');
-
-    const audioBuffer = Buffer.from(data.audio, 'hex');
-    // Save to temp file for upload
-    const tmpPath = '/tmp/tts_output_' + Date.now() + '.wav';
-    require('fs').writeFileSync(tmpPath, audioBuffer);
-
-    // Send voice message via multipart/form-data
-    const formData = new FormData();
-    formData.append('chat_id', chatId);
-    formData.append('voice', new Blob([audioBuffer], { type: 'audio/wav' }), 'tts.wav');
-
-    const uploadRes = await fetch(TG_API + '/sendVoice', {
-      method: 'POST',
-      body: formData,
-    });
-    const uploadData = await uploadRes.json();
-    if (!uploadData.ok) {
-      await tg('sendMessage', { chat_id: chatId, text: 'TTS generated but failed to send: ' + uploadData.description });
-    } else {
-      await tg('sendMessage', { chat_id: chatId, text: '🎤 Morgan Freeman: "' + ttsText.slice(0, 60) + (ttsText.length > 60 ? '...' : '') + '"' });
-    }
-  } catch (e) {
-    console.error('TTS error: ' + e.message);
-    await tg('sendMessage', { chat_id: chatId, text: '❌ TTS failed: ' + e.message });
-  }
-}
-
-async function handleStory(chatId, text) {
-  const prompt = text.replace(/^\/story\s*/, '').trim();
-  if (!prompt) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /story <prompt>\nGenerate a short story.' });
-  }
-  if (prompt.length > 1000) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Prompt too long (max 1000 chars).' });
-  }
-
-  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
-  try {
-    const res = await fetch(EP.story + '/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, language: 'en' }),
-    });
-    if (!res.ok) throw new Error('Story endpoint returned ' + res.status);
-    const data = await res.json();
-
-    // Extract story text - handle various response shapes
-    let storyText = '';
-    if (typeof data === 'string') {
-      storyText = data;
-    } else if (data.story || data.content || data.text) {
-      storyText = data.story || data.content || data.text;
-    } else if (data.title && data.body) {
-      storyText = '📖 *' + data.title + '*\n\n' + (data.body.slice ? data.body : JSON.stringify(data.body));
-    } else {
-      // Try to serialize the whole response sensibly
-      storyText = JSON.stringify(data).slice(0, 2000);
-    }
-
-    if (storyText.length > 4000) storyText = storyText.slice(0, 3990) + '...';
-
-    await tg('sendMessage', { chat_id: chatId, text: '📖 *Story Generator*\n\n' + storyText, parse_mode: 'Markdown', disable_web_page_preview: true });
-  } catch (e) {
-    console.error('Story error: ' + e.message);
-    await tg('sendMessage', { chat_id: chatId, text: '❌ Story generation failed: ' + e.message });
-  }
-}
-
-async function handleAgent(chatId, text) {
-  const query = text.replace(/^\/(agent|ask)\s*/i, '').trim();
-  if (!query) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /ask <your question>\n
-Example: /ask What is the meaning of life?' });
-  }
-
-  console.log('🤖 Agent query from ' + chatId + ': "' + query + '"');
-  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
-
-  try {
-    const router = getAgentRouter();
-    const context = {
-      chatId: chatId.toString(),
-      chatType: 'telegram',
-      username: '',
-      timeout: 60000,
-    };
-    const response = await router.callAgent(query, context);
-    const truncated = response && response.length > 4000 ? response.slice(0, 3950) + '\n\n_(truncated)_' : response;
-    await tg('sendMessage', { chat_id: chatId, text: truncated || 'Got no response from agent.', disable_web_page_preview: true });
-  } catch (e) {
-    console.error('Agent error: ' + e.message);
-    await tg('sendMessage', { chat_id: chatId, text: '⚠️ Agent error: ' + e.message.slice(0, 200) });
-  }
-}
-
-async function handleSearch(chatId, text) {
-  const query = text.replace(/^\/search\s*/i, '').trim();
-  if (!query) return tg('sendMessage', { chat_id: chatId, text: 'Usage: /search <query>' });
-
-  if (!process.env.TAVILY_API_KEY) {
-    return tg('sendMessage', { chat_id: chatId, text: '❌ Web search not configured (TAVILY_API_KEY missing)' });
-  }
-
-  console.log('🌐 Web search: "' + query + '"');
-  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
-
-  const tavily = new TavilyClient(process.env.TAVILY_API_KEY);
-  try {
-    const result = await Promise.race([
-      tavily.search(query, { maxResults: 5, searchDepth: 'basic', days: 30, answer: true }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000))
-    ]);
-
-    if (!result || (!result.answer && !result.results?.length)) {
-      return tg('sendMessage', { chat_id: chatId, text: 'No results found for "' + query + '"' });
-    }
-
-    const lines = ['🔍 *Web Search*: "' + query + '"\n'];
-    if (result.answer) lines.push('💡 ' + result.answer + '\n');
-    if (result.results?.length) {
-      lines.push('📋 *Top Results:*');
-      for (const r of result.results.slice(0, 5)) {
-        const title = (r.title || 'Untitled').slice(0, 80);
-        const url = r.url || '';
-        const score = r.score ? ' [' + Math.round(r.score * 100) + '%]' : '';
-        lines.push('• ' + title + score + '\n  ' + url);
-      }
-    }
-
-    await tg('sendMessage', {
-      chat_id: chatId,
-      text: lines.join('\n'),
-      disable_web_page_preview: true,
-    });
-  } catch (e) {
-    console.error('Search error: ' + e.message);
-    const errMsg = e.message === 'timeout' ? '⏱ Search timed out. Try again.' : '❌ Search failed: ' + e.message;
-    await tg('sendMessage', { chat_id: chatId, text: errMsg });
-  }
-}
-
 async function handleGrowthOS(chatId, text) {
   const { exec } = require('child_process');
   const { promisify } = require('util');
@@ -502,6 +339,172 @@ async function handleGrowthOS(chatId, text) {
   });
 }
 
+// ─── /tts - Text to speech ─────────────────────────
+async function handleTTS(chatId, text) {
+  const ttsText = text.replace(/^\/tts\s*/i, '').trim();
+  if (!ttsText) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /tts <text>\nConverts text to celebrity speech.' });
+  }
+  if (ttsText.length > 500) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Text too long (max 500 chars).' });
+  }
+  await tg('sendChatAction', { chat_id: chatId, action: 'record_audio' });
+  try {
+    const res = await fetch(EP.tts + '/synthesize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: ttsText, celebrity: 'morgan_freeman', language: 'en' }),
+    });
+    if (!res.ok) throw new Error('TTS endpoint error');
+    const data = await res.json();
+    const audioBase64 = data.audio || data.result || data.data || '';
+    if (!audioBase64) throw new Error('No audio in response');
+    const buf = Buffer.from(audioBase64, 'base64');
+    const path = '/tmp/tts_' + Date.now() + '.wav';
+    require('fs').writeFileSync(path, buf);
+    await tg('sendVoice', { chat_id: chatId, voice: fs.createReadStream(path) });
+    require('fs').unlinkSync(path);
+  } catch(e) {
+    tg('sendMessage', { chat_id: chatId, text: 'TTS failed: ' + e.message });
+  }
+}
+
+// ─── /story - Generate story ───────────────────────
+async function handleStory(chatId, text) {
+  const prompt = text.replace(/^\/story\s*/i, '').trim();
+  if (!prompt) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /story <prompt>\nGenerates a short story.' });
+  }
+  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+  try {
+    const res = await fetch(EP.story + '/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, language: 'en' }),
+    });
+    if (!res.ok) throw new Error('Story endpoint error');
+    const data = await res.json();
+    const story = data.story || data.content || data.text || data.title + '\n\n' + data.body || JSON.stringify(data);
+    const truncated = story.slice(0, 4000);
+    await tg('sendMessage', { chat_id: chatId, text: '📖 *Story Generator*\n\n' + truncated, parse_mode: 'Markdown' });
+  } catch(e) {
+    tg('sendMessage', { chat_id: chatId, text: 'Story generation failed: ' + e.message });
+  }
+}
+
+// ─── /search - Web search ─────────────────────────
+async function handleSearch(chatId, text) {
+  const query = text.replace(/^\/search\s*/i, '').trim();
+  if (!query) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /search <query>\nWeb search via Tavily.' });
+  }
+  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: process.env.TAVILY_API_KEY, query, search_depth: 'basic' }),
+    });
+    if (!res.ok) throw new Error('Search failed');
+    const data = await res.json();
+    const results = (data.results || []).slice(0, 5);
+    if (!results.length) return tg('sendMessage', { chat_id: chatId, text: 'No results for: ' + query });
+    const lines = ['🔍 *Web Search*: ' + query + '\n'];
+    for (const r of results) {
+      const title = r.title || 'Result';
+      const url = r.url || '';
+      const snippet = (r.content || '').slice(0, 100);
+      lines.push('📌 *' + title + '*\n' + snippet + '...\n🔗 ' + url + '\n');
+    }
+    await tg('sendMessage', { chat_id: chatId, text: lines.join('\n'), parse_mode: 'Markdown', disable_web_page_preview: true });
+  } catch(e) {
+    tg('sendMessage', { chat_id: chatId, text: 'Search failed: ' + e.message });
+  }
+}
+
+// ─── /ask - AI agent ──────────────────────────────
+const { getAgentRouter } = require('./src/agent_router');
+let _agentRouter = null;
+function getRouter() {
+  if (!_agentRouter) _agentRouter = getAgentRouter({ endpoint: 'http://localhost:18789' });
+  return _agentRouter;
+}
+async function handleAgent(chatId, text) {
+  const query = text.replace(/^\/(ask|agent)\s*/i, '').trim();
+  if (!query) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /ask <question>\nAsk the AI agent.' });
+  }
+  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+  try {
+    const router = getRouter();
+    const response = await Promise.race([
+      router.callAgent(query, { chatId }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 60000))
+    ]);
+    const truncated = (response || '').slice(0, 4000);
+    await tg('sendMessage', { chat_id: chatId, text: truncated });
+  } catch(e) {
+    await tg('sendMessage', { chat_id: chatId, text: 'Agent error: ' + e.message });
+  }
+}
+
+// ─── /remind - Reminder ─────────────────────────
+const REMINDERS_FILE = '/tmp/omniclaw_reminders.json';
+function loadReminders() {
+  try { return JSON.parse(require('fs').readFileSync(REMINDERS_FILE, 'utf8')); }
+  catch { return []; }
+}
+function saveReminders(r) {
+  require('fs').writeFileSync(REMINDERS_FILE, JSON.stringify(r));
+}
+function parseReminderTime(input) {
+  const now = new Date();
+  const m = input.match(/^(\d+)\s*(m|min|mins?|h|hr|hrs?|d|days?)$/i);
+  if (m) {
+    const n = parseInt(m[1]);
+    const u = m[2][0].toLowerCase();
+    const ms = u === 'm' ? n*60000 : u === 'h' ? n*3600000 : n*86400000;
+    return new Date(now.getTime() + ms);
+  }
+  const iso = new Date(input);
+  return isNaN(iso.getTime()) ? null : iso;
+}
+async function handleRemind(chatId, text) {
+  const raw = text.replace(/^\/remind\s*/i, '').trim();
+  const spaceIdx = raw.search(/\s/);
+  if (spaceIdx < 0) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /remind <time> <text>\nExample: /remind 5m laundry' });
+  }
+  const timeStr = raw.slice(0, spaceIdx);
+  const reminderText = raw.slice(spaceIdx + 1);
+  const when = parseReminderTime(timeStr);
+  if (!when) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Could not parse time: ' + timeStr });
+  }
+  if (when <= new Date()) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Time must be in the future.' });
+  }
+  const reminders = loadReminders();
+  reminders.push({ id: require('crypto').randomUUID(), chat_id: chatId, text: reminderText, timestamp: when.toISOString() });
+  saveReminders(reminders);
+  const diff = when - new Date();
+  const mins = Math.round(diff / 60000);
+  const msg = mins < 60 ? mins + ' min' : mins < 1440 ? Math.round(mins/60) + ' hr' : Math.round(mins/1440) + ' day';
+  await tg('sendMessage', { chat_id: chatId, text: 'Reminder set for ' + msg + ': ' + reminderText });
+}
+
+// Check due reminders on each message
+async function checkReminders(chatId) {
+  const reminders = loadReminders();
+  const now = Date.now();
+  const due = reminders.filter(r => new Date(r.timestamp).getTime() <= now && r.chat_id === chatId);
+  const remaining = reminders.filter(r => !(new Date(r.timestamp).getTime() <= now && r.chat_id === chatId));
+  if (due.length > 0) saveReminders(remaining);
+  for (const r of due) {
+    await tg('sendMessage', { chat_id: r.chat_id, text: '🔔 Reminder: ' + r.text });
+  }
+}
+
 // ─── Message router ───────────────────────────────────
 async function handleMessage(msg) {
   const text = (msg && msg.text) || '';
@@ -510,6 +513,9 @@ async function handleMessage(msg) {
 
   if (!chatId) return;
 
+  // Check for due reminders (async, non-blocking)
+  checkReminders(chatId).catch(() => {});
+
   // Commands
   if (text === '/start' || text === '/start@' + BOT_USERNAME) return handleStart(chatId, fromName);
   if (text === '/help' || text === '/help@' + BOT_USERNAME) return handleHelp(chatId);
@@ -517,17 +523,14 @@ async function handleMessage(msg) {
   if (text.startsWith('/vault') || text.startsWith('/vault@' + BOT_USERNAME)) return handleVault(chatId, text);
   if (text.startsWith('/sync') || text.startsWith('/sync@' + BOT_USERNAME)) return handleSync(chatId);
   if (text.startsWith('/growthos') || text.startsWith('/growthos@' + BOT_USERNAME)) return handleGrowthOS(chatId, text);
-  if (text.startsWith('/search') || text.startsWith('/search@' + BOT_USERNAME)) return handleSearch(chatId, text);
   if (text.startsWith('/tts') || text.startsWith('/tts@' + BOT_USERNAME)) return handleTTS(chatId, text);
   if (text.startsWith('/story') || text.startsWith('/story@' + BOT_USERNAME)) return handleStory(chatId, text);
+  if (text.startsWith('/search') || text.startsWith('/search@' + BOT_USERNAME)) return handleSearch(chatId, text);
+  if (text.startsWith('/ask') || text.startsWith('/ask@' + BOT_USERNAME)) return handleAgent(chatId, text);
+  if (text.startsWith('/remind') || text.startsWith('/remind@' + BOT_USERNAME)) return handleRemind(chatId, text);
 
-  // Skip other /commands (but allow /agent and /ask)
-  if (text.startsWith('/') && !text.startsWith('/agent') && !text.startsWith('/ask')) return;
-
-  // /agent or /ask command
-  if (text.startsWith('/agent') || text.startsWith('/ask')) {
-    return handleAgent(chatId, text);
-  }
+  // Skip other /commands
+  if (text.startsWith('/')) return;
 
   // Group: only respond to mentions
   const chatType = msg.chat && msg.chat.type;
@@ -544,32 +547,9 @@ async function handleMessage(msg) {
     return tg('sendMessage', { chat_id: chatId, text: 'Use /status for health check 🟢' });
   }
 
-  // Everything else = vault search automatically, then fall back to agent
+  // Everything else = vault search automatically
   console.log('🔍 Auto-search: "' + text + '"');
-  const vaultResult = await searchVault(text);
-  const items = vaultResult && vaultResult.results ? vaultResult.results : [];
-
-  if (items.length > 0) {
-    return handleVault(chatId, '/vault ' + text);
-  }
-
-  // Auto-agent fallback: vault returned no results, try OpenClaw agent
-  console.log('🤖 Auto-agent fallback for: "' + text + '"');
-  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
-  try {
-    const router = getAgentRouter();
-    const response = await router.callAgent(text, {
-      chatId: chatId.toString(),
-      chatType: chatType || 'private',
-      username: (msg.from && msg.from.username) || '',
-      timeout: 60000,
-    });
-    const truncated = response && response.length > 4000 ? response.slice(0, 3950) + '\n\n_(truncated)_' : response;
-    return tg('sendMessage', { chat_id: chatId, text: truncated || 'Agent returned empty response.', disable_web_page_preview: true });
-  } catch (e) {
-    console.error('Auto-agent error: ' + e.message);
-    return tg('sendMessage', { chat_id: chatId, text: '⚠️ Agent unavailable. Try /ask <question> or /help for commands.' });
-  }
+  return handleVault(chatId, '/vault ' + text);
 }
 
 // ─── Express Routes ───────────────────────────────────
