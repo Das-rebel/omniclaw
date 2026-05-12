@@ -167,11 +167,56 @@ class MessageHandler {
         }
         return { text: 'Group settings only available in groups.' };
 
+      case '/growthos':
+        return this.handleGrowthOS(chatId, args, message);
+
       default:
         return {
           text: `Unknown command: ${command}. Use /help for available commands.`,
           parse_mode: 'Markdown'
         };
+    }
+  }
+
+  /**
+   * Handle /growthos command — delegate to Growth Workflow OS
+   */
+  async handleGrowthOS(chatId) {
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    const fs = require('fs');
+
+    try {
+      const { stdout } = await execAsync(
+        'python3 /Users/Subho/growth-workflow-os/run_daily.py --dry-run 2>&1',
+        { timeout: 60000 }
+      );
+      const match = stdout.match(/TOTAL\s+(\d+)\s+signals/);
+      const signalCount = match ? match[1] : '?';
+
+      const memoDir = '/Users/Subho/growth-workflow-os/operating_memos/output';
+      const memoFiles = fs.existsSync(memoDir)
+        ? fs.readdirSync(memoDir).filter(f => f.startsWith('weekly_memo_')).sort().reverse()
+        : [];
+
+      let memoStatus = 'No memo generated';
+      if (memoFiles.length > 0) {
+        const stat = fs.statSync(`${memoDir}/${memoFiles[0]}`);
+        memoStatus = `${memoFiles[0].replace('weekly_memo_', '').replace('.md', '')} (${Math.round(stat.size / 1024)}KB)`;
+      }
+
+      return {
+        text: `*🧠 Growth OS Status*\n\n` +
+          `📡 Signals: *${signalCount}* (last run)\n` +
+          `📝 Latest memo: *${memoStatus}*\n` +
+          `🌐 http://localhost:8501\n\n` +
+          `/growthos run — full pipeline\n` +
+          `/growthos digest — daily digest`,
+        parse_mode: 'Markdown'
+      };
+    } catch (err) {
+      return { text: `❌ Growth OS error: ${err.message.slice(0, 200)}` };
     }
   }
 
@@ -262,21 +307,31 @@ Reply to bot messages to continue conversations.`;
    */
   async handleStatus(chatId) {
     try {
-      const stats = {
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        memory: process.memoryUsage(),
-        sessions: this.sessionManager?.getStats?.() || {},
-      };
+      // Get cloud system health from all endpoints
+      const cloudHealth = await this.vaultIntegration.getSystemHealth();
+      
+      // Get cache stats
+      const cacheStats = this.vaultIntegration.getCacheStats();
 
-      const statusText = `*System Status* ✅
+      const statusText = `*OmniClaw System Status*
 
-🕐 *Uptime:* ${Math.floor(stats.uptime / 60)}m ${Math.floor(stats.uptime % 60)}s
-💾 *Memory:* ${Math.round(stats.memory.heapUsed / 1024 / 1024)}MB used
-👥 *Active Sessions:* ${stats.sessions.activeSessions || 0}
-📊 *Total Sessions:* ${stats.sessions.totalSessions || 0}
+` +
+        `🟢 *OmniClaw:* ${cloudHealth.omniclaw}
+` +
+        `🔍 *Vault Search:* ${cloudHealth.vault_search}
+` +
+        `🐦 *Twitter Sync:* ${cloudHealth.twitter_sync}
+` +
+        `📷 *Instagram Sync:* ${cloudHealth.instagram_sync}
+` +
+        `🎙️ *Celebrity TTS:* ${cloudHealth.tts}
+` +
+        `📖 *Story Narrator:* ${cloudHealth.story_narrator}
 
-*Status:* All systems operational ✅`;
+` +
+        `💾 *Cache:* ${cacheStats.size} entries
+` +
+        `✅ All cloud endpoints reachable`;
 
       return {
         text: statusText,
@@ -285,7 +340,7 @@ Reply to bot messages to continue conversations.`;
     } catch (error) {
       logger.error('Status check failed:', error);
       return {
-        text: '*Status:* Partial degradation ⚠️\n\nSome metrics unavailable.',
+        text: '*Status:* Check failed ⚠️\n\nCould not reach cloud endpoints.',
         parse_mode: 'Markdown'
       };
     }

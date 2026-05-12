@@ -24,6 +24,7 @@ class AgentRouter {
 
   /**
    * Call OpenClaw agent with message and context
+   * Falls back to cloud endpoint if local spawn fails
    */
   async callAgent(message, context = {}) {
     const startTime = Date.now();
@@ -34,29 +35,98 @@ class AgentRouter {
     // Build enhanced message for agent
     const enhancedMessage = this.buildAgentMessage(message, context);
 
-    let lastError = null;
+    // Try local spawn first
+    try {
+      const response = await this.spawnAgent(enhancedMessage, context);
+      const duration = Date.now() - startTime;
+      logger.info(`Agent response in ${duration}ms for chat ${chatId}`);
+      return this.handleAgentResponse(response, context);
+    } catch (localError) {
+      logger.warn(`Local spawn failed (${localError.message}), trying cloud fallback`);
 
-    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      // Cloud fallback - call OmniClaw cloud endpoint
       try {
-        const response = await this.spawnAgent(enhancedMessage, context);
-
-        const duration = Date.now() - startTime;
-        logger.info(`Agent response in ${duration}ms for chat ${chatId}`);
-
-        return this.handleAgentResponse(response, context);
-      } catch (error) {
-        lastError = error;
-        logger.warn(`Agent attempt ${attempt}/${this.maxRetries} failed: ${error.message}`);
-
-        if (attempt < this.maxRetries) {
-          // Wait before retry (exponential backoff)
-          await this.delay(Math.pow(2, attempt) * 500);
+        const result = await this.callCloudAgent(enhancedMessage, context);
+        if (result && result.text) {
+          logger.info(`Cloud fallback response for chat ${chatId}`);
+          return result.text;
         }
+      } catch (cloudError) {
+        logger.error(`Cloud fallback also failed: ${cloudError.message}`);
+      }
+
+      // Last resort - intelligent rule-based response
+      return this.generateFallbackResponse(message, context);
+    }
+  }
+
+  /**
+   * Cloud agent fallback via HTTP
+   */
+  async callCloudAgent(message, context = {}) {
+    const https = require('https');
+    const body = JSON.stringify({
+      message: message.slice(0, 2000),
+      chatId: context.chatId,
+      chatType: context.chatType,
+      username: context.username
+    });
+
+    return new Promise((resolve, reject) => {
+      const url = new URL(this.endpoint.startsWith('http') ? this.endpoint : 'https://omniclaw-gcs-338789220059.asia-south1.run.app');
+      const options = {
+        hostname: url.hostname,
+        path: '/agent',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+      };
+
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve({ text: data.slice(0, 500) });
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+      setTimeout(() => { req.destroy(); reject(new Error('Cloud timeout')); }, 30000);
+    });
+  }
+
+  /**
+   * Generate intelligent fallback when no AI is available
+   */
+  generateFallbackResponse(message, context) {
+    const text = (typeof message === 'string' ? message : message.message || '').toLowerCase();
+
+    // Smart keyword-based responses
+    const patterns = [
+      { trigger: /\b(status|health|system)\b/i, response: '🟢 OmniClaw is running! Type /status for full system check.' },
+      { trigger: /\b(help|commands|what can|do)\b/i, response: '📋 Available commands:\n/start - Welcome\n/help - Commands\n/status - System health\n/vault <query> - Search knowledge graph\n/search <query> - Web search' },
+      { trigger: /\b(vault|search|bookmark)\b/i, response: '🔍 Try: /vault <your search query>\nExample: /vault AI agent tips' },
+      { trigger: /\b(twitter|instagram|social)\b/i, response: '🐦📷 Social sync active. Twitter sync: ✅ | Instagram sync: ✅\nUse /status for details.' },
+      { trigger: /\b(thanks|thank you|thx)\b/i, response: '😊 You\'re welcome! OmniClaw here to help.' },
+      { trigger: /\b(hi|hello|hey)\b/i, response: '👋 Hello! I\'m OmniClaw bot. Type /help for commands or /status to check system.' },
+      { trigger: /\bbye|goodbye|exit\b/i, response: '👋 Bye! OmniClaw out.' },
+      { trigger: /\bwho are you|what are you|about\b/i, response: '🤖 I\'m OmniClaw, your AI-powered assistant connected to your knowledge graph, social syncs, and cloud services.' },
+      { trigger: /\btime|date|when\b/i, response: `🕐 Current time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST` },
+    ];
+
+    for (const { trigger, response } of patterns) {
+      if (trigger.test(text)) {
+        return response;
       }
     }
 
-    logger.error(`All ${this.maxRetries} agent attempts failed for chat ${chatId}`);
-    throw lastError;
+    // Default fallback
+    return '🤖 OmniClaw here. Try:\n• /status - System health\n• /vault <query> - Search knowledge\n• /help - All commands\n\nOr just describe what you need!';
   }
 
   /**

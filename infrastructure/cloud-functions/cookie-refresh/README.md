@@ -137,7 +137,7 @@ Get current cookie status
 Already configured on VM:
 ```bash
 # Crontab entry
-0 */6 * * * cd ~/vault_scraper && bash vm_sync.sh >> sync.log 2>&1
+0 3 * * * cd ~/vault_scraper && bash vm_sync.sh >> sync.log 2>&1
 ```
 
 ### Manual Cookie Refresh

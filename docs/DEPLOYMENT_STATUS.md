@@ -1,321 +1,307 @@
-# OmniClaw Deployment Status — May 4, 2026
+# OmniClaw Deployment Status — May 12, 2026
 
 ## Executive Summary
-- All Cloud Functions ACTIVE and healthy
-- All vault data sources FRESH
-- All schedulers ENABLED
+- **Vault Search**: Fully operational with Twitter + Instagram results
+- **FAISS Index**: 7,899 CLIP vectors (was 2,037 Instagram-only)
+- **Twitter Sync**: 800 fresh bookmarks fetched with new cookies
+- **Cloud Run**: `serve-vault-search-00004-bjh` deployed and serving
 
-## Architecture Overview
+## What Changed Since May 4
+
+### 1. Vault Search Now Includes Twitter (May 12)
+**Problem:** `keyword_search()` in `serve_vault_search.py` filtered `WHERE type='instagram_post'` — Twitter tweets were completely excluded from keyword search results.
+
+**Fix:** Changed to `WHERE type IN ('instagram_post', 'twitter_tweet')`
+
+**File changed:** `infrastructure/cloud-functions/deploy/serve_vault_search.py` line 175
+
+### 2. vlTags Crash Fixed (May 12)
+**Problem:** Non-string vlTags (dicts, bools, None) crashed keyword search with `TypeError: sequence item 0: expected str instance`
+
+**Fix:** `tags = ' '.join(str(t) for t in meta.get('vlTags', [])).lower()`
+
+### 3. source Field Added to API Responses (May 12)
+**Problem:** API responses had no `source` field — Telegram bot couldn't show 🐦/📷 icons.
+
+**Fix:** Both `semantic_search()` and `keyword_search()` now return `'source': 'twitter'` or `'source': 'instagram'` per result.
+
+### 4. Twitter Cookies Refreshed (May 12)
+**Problem:** auth_token `27711f88095d8b15958e744f15aaa19f4e097928` expired (HTTP 401)
+
+**Fix:** New cookies uploaded to `gs://omniclaw-knowledge-graph/vault/cookies/twitter_cookies.json`
+- auth_token: `867b402e2ab7138e6c328625d633b3c118593bae`
+- ct0: `493a931c1897f84e045b5d1a8eac3d8e3f21c8556bff3886faf85c891d68ad1db86fd314dfcaead216b1912ae681a3ac0a7aa26e9a7a0703aa0e13a0db9ab0f400aede5a5900662a8dae08813a23e69b`
+- twid: `335549747`
+- Query ID confirmed working: `-LGfdImKeQz0xS_jjUwzlA`
+
+**Result:** 800 fresh bookmarks fetched and uploaded to GCS
+
+### 5. FAISS Index Expanded to Include Twitter (May 12)
+**Problem:** FAISS index had only 2,037 Instagram image embeddings, no Twitter vectors
+
+**Fix:** Built CLIP **text** embeddings for all 5,862 Twitter tweets (CLIP supports text encoding)
+- Used text from `name` + `vlTags` + `categories` fields
+- Encoded in batches of 64 at ~45/sec
+- Total: 7,899 vectors (2,037 Instagram + 5,862 Twitter)
+- FAISS file: 23MB (was 6MB)
+
+**Files updated:**
+- `learning_base/clip.faiss` (23MB)
+- `learning_base/clip_ids.json` (180KB)
+- `learning_base/vault.db` (40MB)
+
+**GCS:** All three uploaded to `gs://omniclaw-knowledge-graph/deploy/learning_base/`
+
+**Container build:** Dockerfile downloads these from GCS during build (`curl -sL https://storage.googleapis.com/...`)
+
+### 6. serve-vault-search Deployed (May 12)
+**Revision:** `serve-vault-search-00004-bjh`
+**URL:** https://serve-vault-search-338789220059.asia-south1.run.app
+**Changes:**
+- vlTags crash fixed
+- Twitter tweets included in keyword search
+- `source` field added to all results
+- Learning base updated from GCS (7,899 FAISS vectors)
+
+---
+
+## Architecture Overview (Updated May 12)
+
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         OmniClaw Pipeline                               │
-│                                                                         │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐             │
-│  │   Twitter    │    │  Instagram   │    │   Browser    │             │
-│  │   Scraper   │    │   Scraper   │    │  Bookmarks   │             │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘             │
-│         │                  │                  │                       │
-│         ▼                  ▼                  ▼                       │
-│  ┌─────────────────────────────────────────────────────────┐          │
-│  │              GCS: gs://omniclaw-knowledge-graph/        │          │
-│  │                    vault/                                │          │
-│  │   twitter_bookmarks_automated.json                      │          │
-│  │   instagram_saved_automated.json                        │          │
-│  │   browser_bookmarks.json                                │          │
-│  │   bookmarks_automated.json (MERGED)                      │          │
-│  └──────────────────────────┬──────────────────────────────┘          │
-│                             │                                          │
-│                             ▼                                          │
-│  ┌─────────────────────────────────────────────────────────┐          │
-│  │         Knowledge Graph Builder                          │          │
-│  │    unified_knowledge_graph.json (2,110 nodes)           │          │
-│  └──────────────────────────┬──────────────────────────────┘          │
-│                             │                                          │
-│         ┌────────────────────┼────────────────────┐                     │
-│         ▼                    ▼                    ▼                   │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐            │
-│  │  api-handler │    │ fallback-    │    │  alexa-      │            │
-│  │  (CF)        │    │  handler (CF)│    │  handler (CF)│            │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘            │
-│         │                  │                  │                       │
-│         │                  │                  │                       │
-│         ▼                  ▼                  ▼                       │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐            │
-│  │  Groq        │    │  Cerebras    │    │  Alexa Dev   │            │
-│  │  (primary)   │    │  (fallback)  │    │  Console     │            │
-│  └──────────────┘    └──────────────┘    └──────────────┘            │
-│                             │                                          │
-│                             ▼                                          │
-│                      ┌──────────────┐                                 │
-│                      │  Claude      │                                 │
-│                      │  (Z.ai proxy)│                                 │
-│                      └──────────────┘                                 │
-└─────────────────────────────────────────────────────────────────────────┘
-
-Cloud Functions (asia-south1 unless noted):
-  - instagram-sync          → instagrapi → GCS vault
-  - instagram-vault-scheduler → triggers instagram-sync daily
-  - twitter-sync            → httpx+cookies → GCS vault
-  - bookmark-vault-scheduler → merges sources → KG rebuild
-  - bookmark-processor      → POSTs to scrapers
-  - api-handler (us-central1) → main LLM endpoint
-  - fallback-handler (us-central1) → fallback LLM
-  - alexaHandler (us-central1) → Alexa bridge
-
-Schedulers:
-  - instagram-vault-daily (10:00 UTC) → instagram-vault-scheduler
-  - bookmark-processing-daily (10:30 UTC) → bookmark-processor
-  - twitter-sync-daily (03:00 UTC) → twitter-sync
+┌──────────────────────────────────────────────────────────────┐
+│                    OmniClaw Vault Pipeline                   │
+│                                                               │
+│  Sources                 GCS                    Cloud Run      │
+│  ───────                 ───                    ─────────      │
+│                                                               │
+│  Twitter ──── GQL ──► vault/twitter_bookmarks_automated.json │
+│  (800 bm)               (auth_token + -LGfdImKeQz0xS_jjUwzlA) │
+│                             │                                 │
+│  Instagram ─── instagrapi ─► vault/instagram_saved.json (500)│
+│  (500 posts)                    │                             │
+│                                ▼                             │
+│                    learning_base/                           │
+│                    ├─ vault.db (40MB)                       │
+│                    │   6,187 twitter + 2,037 instagram      │
+│                    ├─ clip.faiss (23MB)                     │
+│                    │   7,899 CLIP vectors                   │
+│                    │   (2,037 ig images + 5,862 tw text)   │
+│                    └─ clip_ids.json (180KB)                  │
+│                              │                               │
+│                              ▼                               │
+│                  serve_vault_search.py                       │
+│                  ├─ semantic_search() → FAISS + CLIP        │
+│                  └─ keyword_search() → SQLite full-text     │
+│                              │                               │
+│                              ▼                               │
+│  Telegram ──── /vault ──► 🐦 Twitter + 📷 Instagram results  │
+│  Auto-search ─────────► 🔍 Same unified results              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## Cloud Functions Status
+---
 
-| Function | Region | State | Timeout | URL |
-|----------|--------|-------|---------|-----|
-| instagram-sync | asia-south1 | ACTIVE | 300s | https://instagram-sync-o36e7noe5a-el.a.run.app |
-| instagram-vault-scheduler | asia-south1 | ACTIVE | 300s | https://instagram-vault-scheduler-o36e7noe5a-el.a.run.app |
-| twitter-sync | asia-south1 | ACTIVE | 300s | https://twitter-sync-o36e7noe5a-el.a.run.app |
-| bookmark-vault-scheduler | asia-south1 | ACTIVE | 300s | https://bookmark-vault-scheduler-o36e7noe5a-el.a.run.app |
-| bookmark-processor | asia-south1 | ACTIVE | 300s | https://bookmark-processor-o36e7noe5a-el.a.run.app |
-| api-handler | us-central1 | ACTIVE | 60s | https://us-central1-omniclaw-personal-assistant.cloudfunctions.net/api-handler |
-| fallback-handler | us-central1 | ACTIVE | 60s | https://us-central1-omniclaw-personal-assistant.cloudfunctions.net/fallback-handler |
-| alexaHandler | us-central1 | ACTIVE | 60s | https://us-central1-omniclaw-personal-assistant.cloudfunctions.net/alexaHandler |
+## Cloud Run Services
 
-## Issues Found & Solutions Applied
+| Service | Revision | URL | Status |
+|---------|----------|-----|--------|
+| **serve-vault-search** | 00004-bjh | https://serve-vault-search-338789220059.asia-south1.run.app | ✅ ACTIVE |
+| **dasomni-bot** | (prev) | https://dasomni-bot-338789220059.asia-south1.run.app | ✅ ACTIVE |
+| **vault-control** | (prev) | https://omniclaw-vault-control-338789220059.us-central1.run.app | ✅ ACTIVE |
 
-### 1. alexaHandler Cloud Function — ORPHANED (P0)
-**Problem:** Cloud Run service for the function was deleted, leaving CF in UNKNOWN state
-**Solution:** Redeployed with `gcloud functions deploy alexaHandler --runtime=nodejs22 --entry-point=alexaHandler --region=us-central1`
-**Files Changed:** None (redeploy only)
-**Date:** 2026-05-04
+---
 
-### 2. AI Fallback Chain — CLAUDE MISSING (P0)
-**Problem:** `resilient-clients.js` only had GroqClient and CerebrasClient. AnthropicClient was missing entirely.
-**Solution:** Added AnthropicClient class using:
-- HTTPS module (not fetch — more reliable in Cloud Functions)
-- Z.ai proxy endpoint: `https://api.z.ai/api/anthropic/messages`
-- Model: `claude-sonnet-4-20250514`
-- Auth: `Authorization: Bearer ${ZAI_API_KEY}`
-**Files Changed:** `infrastructure/cloud-functions/deploy/resilient-clients.js`
-**Date:** 2026-05-04
+## Vault Data Status (May 12)
 
-### 3. Cloud Run Services — CPU/CONCURRENCY CONFLICT (P0)
-**Problem:** Both `alexa-handler` and `omniclaw-alexa-bridge` Cloud Run services showed X (red) with error "cpu < 1 is not supported with concurrency > 1"
-**Solution:** Redeployed with explicit `--cpu=1 --concurrency=1`
-**Files Changed:** None (redeploy only)
-**Date:** 2026-05-04
+| Source | Bookmarks | FAISS Vector | Notes |
+|--------|-----------|--------------|-------|
+| Twitter | 6,187 | 5,862 text embeddings | +800 fresh from today's sync |
+| Instagram | 2,037 | 2,037 image embeddings | Unchanged |
+| **Total** | **8,224** | **7,899** | |
 
-### 4. Twitter Scraper — GRAPHQL QUERY ID STALE + CLOUDFLARE BLOCK (P1)
-**Problem:**
-- GraphQL query ID `WUAL-t2Pq4sg3dZp5-6Srw` returned HTTP 404 (Twitter changed their API)
-- twscrape password login blocked by Cloudflare (403)
-**Solution:**
-- Switched to cookie-injected httpx client (matching Instagram pattern)
-- Used twscrape's own query ID `GQL_FEATURES` and `OP_Bookmarks` from twscrape library
-- Injected cookies from GCS directly into httpx AsyncClient
-- Removed Cloudflare-triggering delays
-**Files Changed:** `infrastructure/cloud-functions/twitter-sync-function/main.py`
-**Date:** 2026-05-04
+### FAISS Index
+- **Total vectors:** 7,899
+- **Instagram:** 2,037 (CLIP image embeddings from thumbnails)
+- **Twitter:** 5,862 (CLIP text embeddings from name + vlTags)
+- **Dimensions:** 768 (clip-vit-large-patch14)
 
-### 5. Twitter Cookies — STALE (P1)
-**Problem:** Cookies uploaded to GCS on 2026-04-22 were expired
-**Solution:** Extracted fresh cookies from Chrome DevTools and uploaded to `gs://omniclaw-knowledge-graph/vault/cookies/twitter_cookies.json`
-**Files Changed:** GCS only
-**Date:** 2026-05-04
+### Semantic Search Quality
+Twitter tweets use **text embeddings** (CLIP encodes the tweet text directly), not image thumbnails. This means:
+- Text queries like "drone", "AI agent", "protein recipes" return Twitter results
+- Image queries (future) would only match Instagram posts
+- Both sources are searchable via semantic similarity
 
-### 6. Instagram Scraper — DOUBLE-ENCODING BUG (P1)
-**Problem:** GCS file `instagram_saved_automated.json` was stored with `posts` field as a JSON-ENCODED STRING instead of a proper JSON array. This caused:
-- `_read_gcs_json` to return `{"posts": "[{...}]"}` (string value)
-- `_merge_posts` to call `.get()` on a string → AttributeError
-**Root Cause:** The `_write_gcs_json` function did `json.dumps()` on already-serialized data
-**Solution:**
-1. Fixed `_write_gcs_json` to detect and handle pre-encoded strings
-2. Fixed `_read_gcs_json` to detect and parse string-encoded posts
-3. Fixed `_merge_posts` to handle existing_posts being a string
-4. Added `force_refresh=true` option to bypass merge entirely
-**Files Changed:** `infrastructure/cloud-functions/instagram-sync-function/main.py`
-**Date:** 2026-05-04
+---
 
-### 7. Instagram Scraper — SESSION VALIDATION FAILING (P1)
-**Problem:** `user_id_from_username` call failed with "property 'user_id' has no setter"
-**Solution:** instagrapi session still works via cookies — the error is non-fatal. Session verification uses `user_info(cl.user_id)` which succeeds.
-**Files Changed:** None (cosmetic issue)
-**Date:** 2026-05-04
+## serve_vault_search.py API
 
-### 8. instagram-vault-scheduler — UNKNOWN STATE (P1)
-**Problem:** CF in UNKNOWN state with "Cloud Run service not found" error
-**Solution:** Redeployed from `~/omniclaw/infrastructure/cloud-functions/bookmark-vault-scheduler/` source with entry point `instagram_scrape`
-**Files Changed:** None (redeploy only)
-**Date:** 2026-05-04
+### Endpoints
 
-### 9. Bookmarks Data — STALE (P2)
-**Problem:** `bookmarks_automated.json` had only 4 items, 9 days old. No merge step existed to combine Twitter + Instagram + Browser sources.
-**Solution:**
-- Merged all three sources manually: 3 Twitter + 80 Instagram + 16 Browser = 98 items
-- Added merge step to `vm_sync.sh` and `vm_sync_gcs.sh`
-- Uploaded fresh file to GCS
-**Files Changed:** `scripts/vm_sync.sh`, `scripts/vm_sync_gcs.sh` (added), GCS upload
-**Date:** 2026-05-04
+| Endpoint | Mode | Sources | Returns |
+|----------|------|---------|---------|
+| `GET /search?q=...&mode=keyword` | keyword | Twitter + Instagram | 10 results, scored by term frequency |
+| `GET /search?q=...&mode=semantic` | semantic | Twitter + Instagram | 10 results, CLIP cosine similarity |
+| `GET /search?q=...` (default) | auto | Twitter + Instagram | semantic → keyword fallback |
+| `GET /health` | - | - | FAISS count, CLIP loaded status |
+| `GET /stats` | - | - | Total nodes, has_clip, has_location |
 
-### 10. Knowledge Graph — STALE (P2)
-**Problem:** `unified_knowledge_graph.json` was 21 days old (last updated ~April 13, 2026)
-**Solution:** Rebuilt KG from fresh Twitter (800) + Instagram (80) + Browser (16) + preserved entity/topic/category nodes
-- New: 2,110 nodes, 7,446 relationships (was 7,077 nodes but many were duplicates)
-**Files Changed:** GCS upload
-**Date:** 2026-05-04
+### Response Format
+```json
+{
+  "query": "machine learning",
+  "total": 10,
+  "results": [
+    {
+      "rank": 1,
+      "id": "1990229238449102951",
+      "name": "Introducing Karpathy: An Agentic Machine Learning Engineer",
+      "caption": "...",
+      "url": "https://x.com/...",
+      "source": "twitter",
+      "score": 12.0,
+      "vlTags": ["robotics", "machines", "code"],
+      "location": "",
+      "colabSummary": ""
+    }
+  ]
+}
+```
 
-### 11. daily-summary.sh — NODE PATH + DATE PARSING (P2)
-**Problem:**
-- Line 260 used bare `node` command which wasn't in PATH on macOS
-- `format_age()` function used GNU `date -j -u -f` which fails on macOS
-**Solution:**
-- Changed `node` to `/usr/local/bin/node`
-- Replaced `date` parsing with python3 `datetime.strptime()` for cross-platform compatibility
-**Files Changed:** `scripts/daily-summary.sh`
-**Date:** 2026-05-04
+### Telegram Formatting
+```
+🔍 Vault: "machine learning" (10 results)
 
-### 12. instagram-vault-daily Scheduler — MISSING (P1)
-**Problem:** The `instagram-vault-daily` Cloud Scheduler job didn't exist
-**Solution:** Created with `gcloud scheduler jobs create http instagram-vault-daily --schedule="0 10 * * *" --uri="https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/instagram-vault-scheduler"`
-**Date:** 2026-05-04
+🐦 Introducing Karpathy: An Agentic Machine Learning 
+  "Introducing Karpathy: An Agentic Machine Learning Engineer..."
+  🏷 robotics, machines, code, screens
 
-## Vault Data Status
+📷 Review and overview of the Sekoza dryer machine
+  🏷 food dehydrator, dryer machine, drying performance
+```
 
-| Source | Items | Last Updated | GCS Path |
-|--------|-------|-------------|----------|
-| Twitter | 800 | 2026-05-04 11:34 UTC | vault/twitter_bookmarks_automated.json |
-| Instagram | 50 | 2026-05-04 14:48 UTC | vault/instagram_saved_automated.json |
-| Bookmarks (merged) | 98 | 2026-05-04 11:24 UTC | vault/bookmarks_automated.json |
-| Browser BMs | 16 | ~2026-04-29 | vault/browser_bookmarks.json |
-| Knowledge Graph | 2,110 nodes | 2026-05-04 12:00 UTC | unified_knowledge_graph.json |
+---
 
-## Cloud Scheduler Jobs
+## Twitter Sync Pipeline
 
-| Job | Schedule | Target | State |
-|-----|----------|--------|-------|
-| instagram-vault-daily | 0 10 * * * | instagram-vault-scheduler | ENABLED |
-| bookmark-processing-daily | 30 10 * * * | bookmark-processor | ENABLED |
-| twitter-sync-daily | 0 3 * * * | twitter-sync | ENABLED |
+### How It Works
+1. Load cookies from `gs://omniclaw-knowledge-graph/vault/cookies/twitter_cookies.json`
+2. Create httpx AsyncClient with auth_token + ct0 cookies
+3. Call `https://x.com/i/api/graphql/-LGfdImKeQz0xS_jjUwzlA/Bookmarks`
+4. Paginate with cursor until 800 bookmarks or end
+5. Upload to `gs://omniclaw-knowledge-graph/vault/twitter_bookmarks_automated.json`
+6. `ingest_twitter.py` loads into vault.db
 
-## Key Architecture Decisions
+### Current Status
+- ✅ Auth works: `auth_token=867b402e2ab7138e6c328625d633b3c118593bae`
+- ✅ Query ID works: `-LGfdImKeQz0xS_jjUwzlA` (Twitter hasn't rotated it)
+- ✅ 800 bookmarks fetched
+- ✅ Ingested into vault.db (6,187 total twitter bookmarks)
 
-### AI Provider Chain (resilient-clients.js)
-The fallback chain is: Groq → Cerebras → Anthropic (Z.ai proxy)
-- Uses Z.ai proxy at `https://api.z.ai/api/anthropic/messages`
-- Model: `claude-sonnet-4-20250514`
-- Auth: `Bearer ${ZAI_API_KEY}` (NOT ANTHROPIC_API_KEY)
-- Uses Node.js `https` module (not `fetch`) for reliability
+### Cloud Function
+- **Function:** `twitter-sync` (Cloud Run, NOT Cloud Functions)
+- **URL:** https://twitter-sync-o36e7noe5a-el.a.run.app
+- **Timeout:** 300s (50s was too short, got truncated at ~300 bookmarks)
 
-### Instagram Scraping (instagrapi)
-- Uses cookie-based session from GCS (`vault/cookies/instagram_cookies.json`)
-- Session refreshed automatically after each fetch
-- `collection_medias()` used for saved posts (NOT `collection_items()` which was removed in instagrapi 2.x)
-- Merge logic handles double-encoded posts gracefully
+---
 
-### Twitter Scraping (twscrape + httpx)
-- Cookies injected directly into httpx AsyncClient (NOT via twscrape AccountsPool)
-- Uses twscrape's own GraphQL query ID and features (not hardcoded)
-- Falls back to no-auth syndication API if cookies fail
+## Instagram Sync Pipeline
 
-## Remaining Issues (P2/P3)
+### How It Works
+1. instagrapi loads session from `vault/cookies/instagram_cookies.json`
+2. Calls `collection_medias()` for saved posts
+3. Results uploaded to `gs://omniclaw-knowledge-graph/vault/instagram_saved_automated.json`
+4. `ingest_instagram.py` loads into vault.db
 
-### 1. Instagram Cookie Session Expiry
-Instagram cookies expire and need periodic refresh. The current session may need refreshing every few weeks.
-**Recommendation:** Set up alerting when scraper returns <5 items
+### Current Status
+- ✅ instagrapi session works (challenge_required avoided)
+- ✅ 500 posts synced (May 12)
+- ⚠️ Cookie session expires periodically — may need refresh
 
-### 2. Bookmark Processor Doesn't Read GCS
-The `bookmark-processor` function POSTs to scraper endpoints instead of reading from GCS.
-**Recommendation:** Refactor to read from GCS directly
+---
 
-### 3. Knowledge Graph Build Not Scheduled
-KG is rebuilt manually. Should be triggered by the bookmark-processing-daily scheduler.
-**Recommendation:** Add KG build step to `bookmark-vault-scheduler`
+## Key Files
 
-### 4. vm_sync.sh References GCP VM Path
-`vm_sync.sh` uses `/home/ubuntu/vault_scraper/` which is a GCP VM path, not available on macOS
-**Recommendation:** Add environment detection to `vm_sync.sh`
+| File | Purpose |
+|------|---------|
+| `serve_vault_search.py` | Flask server + semantic/keyword search |
+| `learning_base/vault.db` | SQLite with 8,224 bookmarks |
+| `learning_base/clip.faiss` | FAISS index with 7,899 vectors |
+| `learning_base/clip_ids.json` | Vector ID mapping |
+| `ingest_twitter.py` | Twitter → vault.db pipeline |
+| `ingest_instagram.py` | Instagram → vault.db pipeline |
+
+---
 
 ## Useful Commands
 
 ```bash
-# Check all Cloud Functions
-gcloud functions list --project=omniclaw-personal-assistant
+# Test vault search
+curl "https://serve-vault-search-338789220059.asia-south1.run.app/search?q=machine%20learning&limit=5"
 
-# Check all Cloud Run services
-gcloud run services list --platform=managed --region=us-central1 --project=omniclaw-personal-assistant
+# Test semantic search
+curl "https://serve-vault-search-338789220059.asia-south1.run.app/search?q=drone&mode=semantic&limit=5"
 
-# Check schedulers
-gcloud scheduler jobs list --project=omniclaw-personal-assistant --location=us-central1
+# Check FAISS health
+curl "https://serve-vault-search-338789220059.asia-south1.run.app/health"
 
-# Test Twitter scraper
-gcloud functions call twitter-sync --region=asia-south1 --data '{"send_summary": true}'
+# Test Twitter sync
+curl -X POST "https://twitter-sync-o36e7noe5a-el.a.run.app/" -H "Content-Type: application/json" -d '{"send_summary": true}'
 
-# Test Instagram scraper (force refresh)
-curl -X POST "https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/instagram-sync" \
-  -H "Content-Type: application/json" \
-  -d '{"force_refresh": true}'
-
-# Check vault data
+# Check GCS vault files
 gsutil ls gs://omniclaw-knowledge-graph/vault/
-gsutil cat gs://omniclaw-knowledge-graph/vault/latest_sync_summary.json
 
-# Daily summary dry-run
-cd ~/omniclaw && ./scripts/daily-summary.sh --dry-run
+# Ingest Twitter bookmarks locally
+cd ~/omniclaw/services/vault-pipeline && python ingest_twitter.py
 
-# Daily summary (sends to WhatsApp)
-cd ~/omniclaw && ./scripts/daily-summary.sh
+# Rebuild FAISS locally
+python3 -c "
+import json, sqlite3, torch, faiss, numpy as np
+from transformers import CLIPProcessor, CLIPModel
+
+# ... (see extract_clip_local.py for full code)
+"
 ```
 
-## Rollback Notes
+---
 
-If any change causes issues, these are the previous working states:
+## Previous Issues (May 4) — Status
 
-- **twitter-sync**: revision `twitter-sync-00016-hih` (before cookie-injection rewrite)
-- **instagram-sync**: revision `instagram-sync-00005-cex` (before main.py rewrite)
-- **resilient-clients.js**: git checkout fc82e9b -- infrastructure/cloud-functions/deploy/resilient-clients.js
-
-## Vault Control Center
-
-A web dashboard deployed to Cloud Run providing permanent URL access to vault management.
-
-**URL:** https://omniclaw-vault-control-338789220059.us-central1.run.app
-
-**Features:**
-- Password-protected access (env var: `CONTROL_PASSWORD=omniclaw2026`)
-- Dashboard with vault data status (Twitter 800, Instagram 500, Bookmarks 98, Knowledge Graph 2,110 nodes)
-- Manual sync buttons for Twitter, Instagram, Bookmarks, and All
-- Vault data browser with pagination
-- Cloud Functions status view
-- Scheduled jobs status view
-- Auto-refresh every 60 seconds
-
-**Architecture:**
-- Cloud Run service: `omniclaw-vault-control`
-- Region: us-central1
-- Backend: Node.js + Express
-- Frontend: Embedded HTML/CSS/JS
-- Data source: GCS `gs://omniclaw-knowledge-graph/`
-
-**Files:**
-- `vault-control/index.js` - Express server
-- `vault-control/public/index.html` - Dashboard UI
-- `vault-control/public/style.css` - Dark theme styles
-- `vault-control/public/app.js` - Frontend logic
-- `vault-control/Dockerfile` - Container config
-
-**API Endpoints:**
-- `GET /api/vault/status` - Vault data status
-- `GET /api/vault/browse` - Data browser with ?file=&limit=&offset=
-- `GET /api/vault/history` - Recent sync history
-- `GET /api/vault/files` - List available vault files
-- `POST /api/sync/twitter` - Trigger Twitter sync
-- `POST /api/sync/instagram` - Trigger Instagram sync
-- `POST /api/sync/bookmarks` - Trigger Bookmarks sync
-- `POST /api/sync/all` - Trigger all syncs
-- `GET /api/functions/status` - Cloud Functions status
-- `GET /api/schedulers/status` - Scheduled jobs status
+| Issue | Status | Notes |
+|-------|--------|-------|
+| alexaHandler orphaned | ✅ Fixed May 4 | - |
+| Claude missing | ✅ Fixed May 4 | - |
+| Cloud Run CPU conflict | ✅ Fixed May 4 | - |
+| Twitter GQL query ID stale | ✅ Fixed May 12 | - |
+| Twitter cookies stale | ✅ Fixed May 12 | Refreshed with new auth_token |
+| Instagram double-encoding | ✅ Fixed May 4 | - |
+| Instagram session validation | ✅ Stable | - |
+| instagram-vault-scheduler UNKNOWN | ✅ Fixed May 4 | - |
+| Bookmarks data stale | ✅ Fixed May 12 | 800 fresh twitter, 500 instagram |
+| Knowledge Graph stale | ✅ Partially | vault.db updated, unified_knowledge_graph.json older |
+| daily-summary.sh date parsing | ✅ Fixed May 4 | - |
+| Instagram cookie expiry | ⚠️ Ongoing | Need monitoring |
+| Bookmark processor GCS | ⚠️ Pending | - |
+| KG build not scheduled | ⚠️ Pending | - |
 
 ---
-Generated: 2026-05-04
-Session: OmniClaw Deployment Audit & Fix
+
+## New Issues (May 12)
+
+### 1. unified_knowledge_graph.json Not Updated
+**Status:** ⚠️ P2
+**Problem:** Last built May 10, has 8,214 items from migration. Not rebuilt with new Twitter data.
+**Fix needed:** Run knowledge graph builder to incorporate latest vault.db data
+
+### 2. vault_url_lookup.json Not Updated  
+**Status:** ⚠️ P2
+**Problem:** URL lookup table (16,426 entries) still points to old GCS paths
+**Fix needed:** Rebuild with current vault.db URLs
+
+### 3. CLIP Index Uses Mixed Encoding
+**Status:** ℹ️ Info
+**Note:** Instagram uses image embeddings (thumbnail photos), Twitter uses text embeddings (tweet text). This is intentional — CLIP supports both modes. Results may be heterogeneous in semantic search.
+
+---
+
+Generated: 2026-05-12
 Author: PI CLI Agent

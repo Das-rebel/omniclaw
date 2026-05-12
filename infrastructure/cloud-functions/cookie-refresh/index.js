@@ -11,7 +11,7 @@
 const { Storage } = require('@google-cloud/storage');
 
 // Initialize GCS client
-const storage = new Storage();
+const storage = new Storage({ projectId: 'omniclaw-personal-assistant' });
 const BUCKET_NAME = 'omniclaw-knowledge-graph';
 const COOKIE_DIR = 'vault/cookies/';
 

@@ -1,0 +1,9 @@
+flask==3.1.0
+gunicorn==24.0.0
+transformers==4.51.3
+torch==2.5.1
+faiss-cpu==1.9.0
+numpy==1.26.4
+Pillow==10.4.0
+google-cloud-storage==2.18.2
+httpx==0.28.1

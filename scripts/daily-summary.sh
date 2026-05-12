@@ -263,7 +263,7 @@ echo "[$(date)] Queued daily summary to ${MSG_FILE}"
 echo "[$(date)] Target: ${TARGET_JID}"
 
 # Verify the bot is running
-if pgrep -f "omniclaw_v3.js" > /dev/null 2>&1; then
+if pgrep -f "omniclaw_direct_whatsapp" > /dev/null 2>&1; then
   echo "[$(date)] Bot is running - message will be picked up from outbox"
 else
   echo "[$(date)] WARNING: Bot not running! Message queued in outbox for when it starts."
