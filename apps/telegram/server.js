@@ -377,6 +377,52 @@ Example: /ask What is the meaning of life?' });
   }
 }
 
+async function handleSearch(chatId, text) {
+  const query = text.replace(/^\/search\s*/i, '').trim();
+  if (!query) return tg('sendMessage', { chat_id: chatId, text: 'Usage: /search <query>' });
+
+  if (!process.env.TAVILY_API_KEY) {
+    return tg('sendMessage', { chat_id: chatId, text: '❌ Web search not configured (TAVILY_API_KEY missing)' });
+  }
+
+  console.log('🌐 Web search: "' + query + '"');
+  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+
+  const tavily = new TavilyClient(process.env.TAVILY_API_KEY);
+  try {
+    const result = await Promise.race([
+      tavily.search(query, { maxResults: 5, searchDepth: 'basic', days: 30, answer: true }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000))
+    ]);
+
+    if (!result || (!result.answer && !result.results?.length)) {
+      return tg('sendMessage', { chat_id: chatId, text: 'No results found for "' + query + '"' });
+    }
+
+    const lines = ['🔍 *Web Search*: "' + query + '"\n'];
+    if (result.answer) lines.push('💡 ' + result.answer + '\n');
+    if (result.results?.length) {
+      lines.push('📋 *Top Results:*');
+      for (const r of result.results.slice(0, 5)) {
+        const title = (r.title || 'Untitled').slice(0, 80);
+        const url = r.url || '';
+        const score = r.score ? ' [' + Math.round(r.score * 100) + '%]' : '';
+        lines.push('• ' + title + score + '\n  ' + url);
+      }
+    }
+
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text: lines.join('\n'),
+      disable_web_page_preview: true,
+    });
+  } catch (e) {
+    console.error('Search error: ' + e.message);
+    const errMsg = e.message === 'timeout' ? '⏱ Search timed out. Try again.' : '❌ Search failed: ' + e.message;
+    await tg('sendMessage', { chat_id: chatId, text: errMsg });
+  }
+}
+
 async function handleGrowthOS(chatId, text) {
   const { exec } = require('child_process');
   const { promisify } = require('util');
@@ -471,6 +517,7 @@ async function handleMessage(msg) {
   if (text.startsWith('/vault') || text.startsWith('/vault@' + BOT_USERNAME)) return handleVault(chatId, text);
   if (text.startsWith('/sync') || text.startsWith('/sync@' + BOT_USERNAME)) return handleSync(chatId);
   if (text.startsWith('/growthos') || text.startsWith('/growthos@' + BOT_USERNAME)) return handleGrowthOS(chatId, text);
+  if (text.startsWith('/search') || text.startsWith('/search@' + BOT_USERNAME)) return handleSearch(chatId, text);
   if (text.startsWith('/tts') || text.startsWith('/tts@' + BOT_USERNAME)) return handleTTS(chatId, text);
   if (text.startsWith('/story') || text.startsWith('/story@' + BOT_USERNAME)) return handleStory(chatId, text);
 
