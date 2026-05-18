@@ -334,29 +334,34 @@ async function handleGrowthOS(chatId, text) {
   return tg('sendMessage', { chat_id: chatId, text: '🧠 *Growth OS*\n\n🌐 ' + DASHBOARD + '\n\n/growthos digest - Daily digest', parse_mode: 'Markdown', disable_web_page_preview: true });
 }
 
-const initSqlJs = require('sql.js');
+const initSqlJs = require('sql.js').default;
 let sqlitedb = null;  // In-memory SQLite loaded from GCS
 let sqlitedbLoaded = 0;
 
 // ─── GCS SQLite helpers for content drafts ─────────────
 const GCS_DB_URL = 'https://storage.googleapis.com/growth-os-db-338789220059/growth_os.db';
-const SQL_WASM_URL = 'https://cdn.jsdelivr.net/gh/sql-js/sql.js@1.10.3/dist/sql-wasm.wasm';
+const SQL_WASM_URL = 'https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.wasm';
 
 async function loadSqliteFromGCS() {
   // Cache for 5 minutes
   if (sqlitedb && Date.now() - sqlitedbLoaded < 300000) return sqlitedb;
   try {
-    // Step 1: Initialize sql.js with its wasm binary
-    const SQL = await initSqlJs({
-      locateFile: () => SQL_WASM_URL
-    });
-    // Step 2: Fetch the SQLite DB file from GCS
-    const res = await fetch(GCS_DB_URL + '?cachebust=' + Date.now(), {
+    // Step 1: Fetch the sql.js wasm binary from CDN
+    const wasmRes = await fetch(SQL_WASM_URL, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!wasmRes.ok) throw new Error('WASM fetch failed: ' + wasmRes.status);
+    const wasmBuf = await wasmRes.arrayBuffer();
+
+    // Step 2: Initialize sql.js with the wasm binary
+    const SQL = await initSqlJs({ wasmBinary: new Uint8Array(wasmBuf) });
+
+    // Step 3: Fetch the SQLite DB file from GCS
+    const dbRes = await fetch(GCS_DB_URL + '?cachebust=' + Date.now(), {
       headers: { 'User-Agent': 'Mozilla/5.0' }
     });
-    if (!res.ok) throw new Error('GCS fetch failed: ' + res.status);
-    const dbBuf = await res.arrayBuffer();
-    // Step 3: Open the DB with sql.js
+    if (!dbRes.ok) throw new Error('GCS DB fetch failed: ' + dbRes.status);
+    const dbBuf = await dbRes.arrayBuffer();
+
+    // Step 4: Open the DB
     sqlitedb = new SQL.Database(new Uint8Array(dbBuf));
     sqlitedbLoaded = Date.now();
     console.log('📝 SQLite loaded from GCS, size: ' + Math.round(dbBuf.byteLength / 1024) + 'KB');
