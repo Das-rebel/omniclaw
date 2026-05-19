@@ -22,7 +22,7 @@ const CONFIG = {
   VAULT_URL: 'https://omniclaw-vault-control-338789220059.us-central1.run.app',
   VAULT_PASSWORD: process.env.VAULT_PASSWORD || 'omniclaw2026',
   
-  WA_OUTBOX: '/tmp/omniclaw_baileys/outbox',
+  WA_OUTBOX: '/tmp/omniclaw_openwa/outbox',
   WA_DM_JID: '919003349852@s.whatsapp.net',
   
   // Thresholds
@@ -178,13 +178,47 @@ const fs = require('fs');
 const path = require('path');
 
 function queueWhatsAppMessage(jid, message) {
-  const timestamp = Date.now();
-  const msgFile = path.join(CONFIG.WA_OUTBOX, `health-${timestamp}.msg`);
-  
-  execSync(`mkdir -p "${CONFIG.WA_OUTBOX}"`, { stdio: 'ignore' });
-  fs.writeFileSync(msgFile, `${jid}\n${message}`);
-  console.log(`[WA] Queued message to ${msgFile}`);
-  return msgFile;
+  // Try OpenWA REST API first (replaces baileys outbox)
+  const openwaUrl = process.env.OPENWA_URL || 'http://localhost:2785';
+  const openwaKey = process.env.OPENWA_KEY || 'dev-admin-key';
+
+  try {
+    // Auto-detect active session ID
+    const sessionsList = execSync(
+      `curl -sf "${openwaUrl}/api/sessions" -H "X-API-Key: ${openwaKey}"`,
+      { encoding: 'utf-8', timeout: 5000 }
+    );
+    const sessions = JSON.parse(sessionsList);
+    const active = sessions.find(s => s.status === 'ready');
+    if (!active) throw new Error('No active session');
+
+    // Write payload to temp file to avoid shell quoting issues
+    const tmpFile = `/tmp/openwa-payload-${Date.now()}.json`;
+    const payload = JSON.stringify({ chatId: jid, text: message });
+    fs.writeFileSync(tmpFile, payload);
+
+    execSync(
+      `curl -sf -X POST "${openwaUrl}/api/sessions/${active.id}/messages/send-text" ` +
+      `-H "Content-Type: application/json" -H "X-API-Key: ${openwaKey}" ` +
+      `-d @${tmpFile}`,
+      { encoding: 'utf-8', timeout: 15000 }
+    );
+
+    // Cleanup temp file
+    try { fs.unlinkSync(tmpFile); } catch {}
+
+    console.log(`[WA] Sent via OpenWA to ${jid}`);
+    return true;
+  } catch (e) {
+    console.log(`[WA] OpenWA failed, falling back to outbox: ${e.message}`);
+    // Fallback to outbox
+    const timestamp = Date.now();
+    const msgFile = path.join(CONFIG.WA_OUTBOX, `health-${timestamp}.msg`);
+    execSync(`mkdir -p "${CONFIG.WA_OUTBOX}"`, { stdio: 'ignore' });
+    fs.writeFileSync(msgFile, `${jid}\n${message}`);
+    console.log(`[WA] Queued message to ${msgFile}`);
+    return msgFile;
+  }
 }
 
 // ─── ENHANCEMENTS — 3 STRATEGIC CATEGORIES ──────────────────────────────

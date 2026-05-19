@@ -9,12 +9,12 @@
 #   ./daily-summary.sh --dry-run     # print to stdout, don't send
 #
 # Cron: 7 AM IST = 1:30 AM UTC
-#   30 1 * * * /Users/Subho/omniclaw/scripts/daily-summary.sh >> /tmp/omniclaw_baileys/daily-summary.log 2>&1
+#   30 1 * * * /Users/Subho/omniclaw/scripts/daily-summary.sh >> /tmp/omniclaw_openwa/daily-summary.log 2>&1
 #
 set -euo pipefail
 
 # ─── CONFIG ────────────────────────────────────────────────
-OUTBOX_DIR="/tmp/omniclaw_baileys/outbox"
+OUTBOX_DIR="/tmp/omniclaw_openwa/outbox"
 OUTBOX_SENT="${OUTBOX_DIR}/sent"
 GCS_BUCKET="gs://omniclaw-knowledge-graph"
 GCS_PROJECT="omniclaw-personal-assistant"
@@ -267,10 +267,12 @@ if pgrep -f "omniclaw_direct_whatsapp" > /dev/null 2>&1; then
   echo "[$(date)] Bot is running - message will be picked up from outbox"
 else
   echo "[$(date)] WARNING: Bot not running! Message queued in outbox for when it starts."
-  echo "[$(date)] Fallback: attempting one-shot send..."
-  # Try the fallback sender
-  if [ -f "/Users/Subho/omniclaw/scripts/send-wa-summary.js" ]; then
-    /usr/local/bin/node /Users/Subho/omniclaw/scripts/send-wa-summary.js "${TARGET_JID}" "${REPORT}" 2>&1 || true
+  echo "[$(date)] Fallback: sending via OpenWA REST API..."
+  # Try OpenWA REST API (replaces old baileys one-shot)
+  if /Users/Subho/omniclaw/scripts/openwa-send.sh "${TARGET_JID}" "${REPORT}" 2>&1; then
+    echo "[$(date)] Sent via OpenWA"
+  else
+    echo "[$(date)] OpenWA fallback also failed - message stays in outbox"
   fi
 fi
 

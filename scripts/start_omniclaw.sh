@@ -1,27 +1,30 @@
 #!/bin/bash
-# Start OmniClaw WhatsApp Auto-Reply with Outbox Support
+# Start OmniClaw WhatsApp Auto-Reply with OpenWA
 
-SCRIPT_DIR="/tmp/omniclaw_baileys"
-BOT_SCRIPT="omniclaw_direct_whatsapp.js"
-LOG_FILE="/tmp/omniclaw_baileys/bot.log"
+SCRIPT_DIR="/tmp/omniclaw_openwa"
+BOT_SCRIPT="/Users/Subho/omniclaw/scripts/omniclaw_direct_whatsapp.js"
+LOG_FILE="/tmp/omniclaw_openwa/bot.log"
 
-# Ensure outbox dirs exist
+# Ensure dirs exist
 mkdir -p "${SCRIPT_DIR}/outbox" "${SCRIPT_DIR}/outbox/sent"
 
-if pgrep -f "${BOT_SCRIPT}" > /dev/null; then
-    echo "OmniClaw is already running (PID: $(pgrep -f "${BOT_SCRIPT}"))"
+if pgrep -f "omniclaw_direct_whatsapp.js" > /dev/null; then
+    echo "OmniClaw is already running (PID: $(pgrep -f "omniclaw_direct_whatsapp.js"))"
     exit 0
 fi
 
-cd "$SCRIPT_DIR"
-nohup node "${BOT_SCRIPT}" > "${LOG_FILE}" 2>&1 &
-sleep 5
+# Set OpenWA env
+export OPENWA_URL="${OPENWA_URL:-http://localhost:2785}"
+export OPENWA_KEY="${OPENWA_KEY:-dev-admin-key}"
 
-if pgrep -f "${BOT_SCRIPT}" > /dev/null; then
-    echo "OmniClaw started (PID: $(pgrep -f "${BOT_SCRIPT}"))"
+nohup node "${BOT_SCRIPT}" > "${LOG_FILE}" 2>&1 &
+sleep 3
+
+if pgrep -f "omniclaw_direct_whatsapp.js" > /dev/null; then
+    echo "OmniClaw started (PID: $(pgrep -f "omniclaw_direct_whatsapp.js"))"
     echo "  Logs: tail -f ${LOG_FILE}"
     echo "  Outbox: ${SCRIPT_DIR}/outbox/"
 else
-    echo "Failed to start OmniClaw"
-    tail -10 "${LOG_FILE}"
+    echo "Failed to start — check ${LOG_FILE}"
+    tail -10 "${LOG_FILE}" 2>/dev/null
 fi

@@ -1,14 +1,17 @@
 /**
- * WhatsApp Client (Wrapper)
- * Acts as an alias/bridge to BaileysWhatsAppClient
+ * WhatsApp Client Alias — OpenWA REST API
+ * 
+ * Extends OpenWAWhatsAppClient (formerly BaileysWhatsAppClient)
+ * All existing code using WhatsAppClient continues to work unchanged.
  */
 
-const BaileysWhatsAppClient = require('./baileys_whatsapp_client');
+const OpenWAWhatsAppClient = require('./baileys_whatsapp_client');
 
-class WhatsAppClient extends BaileysWhatsAppClient {
+class WhatsAppClient extends OpenWAWhatsAppClient {
   constructor(config = {}) {
     super(config);
-    this.clientId = 'WhatsApp';
+    this.OPENWA_URL = this.url;
+    this.OPENWA_KEY = this.key;
   }
 }
 

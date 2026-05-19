@@ -1,213 +1,157 @@
 #!/usr/bin/env node
 /**
- * OmniClaw Direct WhatsApp Bridge using Baileys
- * Receives inbound messages and auto-responds using AI
+ * OmniClaw Direct WhatsApp Bridge — OpenWA REST API
+ * Polls OpenWA for messages, sends AI responses via REST API
+ * Run: node scripts/omniclaw_direct_whatsapp.js
  */
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, proto } = require('@whiskeysockets/baileys');
+const http = require('http');
+const https = require('https');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const OUTBOX_DIR = '/tmp/omniclaw_baileys/outbox';
-const SESSION_DIR = '/Users/Subho/.openclaw/credentials/whatsapp/default';
-const MY_NUMBER = '+919003349852';
-const LOG_FILE = '/tmp/omniclaw-baileys.log';
+const CONFIG = {
+  OPENWA_URL: process.env.OPENWA_URL || 'http://localhost:2785',
+  OPENWA_KEY: process.env.OPENWA_KEY || 'dev-admin-key',
+  SESSION_ID: process.env.OPENWA_SESSION_ID || '',
+  POLL_INTERVAL_MS: 5000,
+  LOG_FILE: '/tmp/omniclaw_openwa/bot.log',
+  AGENT_TIMEOUT: 60000,
+};
 
-// Ensure session directory exists
-if (!fs.existsSync(SESSION_DIR)) {
-    fs.mkdirSync(SESSION_DIR, { recursive: true });
-}
+const OUTBOX_DIR = '/tmp/omniclaw_openwa/outbox';
+const LOG_FILE = '/tmp/omniclaw_openwa/bot.log';
 
 function log(msg) {
-    const timestamp = new Date().toISOString();
-    const line = `[${timestamp}] ${msg}\n`;
-    fs.appendFileSync(LOG_FILE, line);
-    console.log(line.trim());
+  const ts = new Date().toISOString();
+  const line = `[${ts}] ${msg}`;
+  fs.appendFileSync(LOG_FILE, line + '\n');
+  console.log(line);
+}
+
+function openwaReq(method, endpoint, body = null) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(CONFIG.OPENWA_URL + endpoint);
+    const mod = url.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname, method,
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': CONFIG.OPENWA_KEY },
+    }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } }); });
+    req.on('error', reject);
+    req.setTimeout(20000, () => { req.destroy(); reject(new Error('Timeout')); });
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+
+async function getActiveSession() {
+  if (CONFIG.SESSION_ID) return CONFIG.SESSION_ID;
+  try {
+    const sessions = await openwaReq('GET', '/api/sessions');
+    if (Array.isArray(sessions)) {
+      const active = sessions.find(s => s.status === 'ready');
+      if (active) { CONFIG.SESSION_ID = active.id; log(`📱 Session: ${active.name}`); return active.id; }
+    }
+  } catch {}
+  return null;
+}
+
+async function sendText(chatId, text) {
+  const sid = await getActiveSession();
+  if (!sid) throw new Error('No active WA session');
+  await openwaReq('POST', `/api/sessions/${sid}/messages/send-text`, { chatId, text });
+  log(`✅ Sent: ${text.slice(0, 50)}`);
+}
+
+async function getMessages(limit = 50) {
+  const sid = await getActiveSession();
+  if (!sid) return [];
+  try {
+    const msgs = await openwaReq('GET', `/api/sessions/${sid}/messages?limit=${limit}`);
+    return Array.isArray(msgs) ? msgs : [];
+  } catch { return []; }
 }
 
 async function sendAgentResponse(sender, message) {
-    return new Promise((resolve, reject) => {
-        log(`🤖 Calling agent for: ${message.substring(0, 50)}...`);
-        
-        const proc = spawn('openclaw', [
-            'agent', '--local', '--agent', 'main',
-            '--message', `You received a WhatsApp message from ${sender}. Message: "${message}". Provide a brief, helpful response.`
-        ], {
-            env: { ...process.env }
-        });
-
-        let stdout = '';
-        let stderr = '';
-
-        proc.stdout.on('data', (data) => { stdout += data.toString(); });
-        proc.stderr.on('data', (data) => { stderr += data.toString(); });
-
-        proc.on('close', (code) => {
-            if (code === 0) {
-                // Clean response - remove box-drawing chars and empty lines
-                const lines = stdout.split('\n')
-                    .filter(l => l.trim() && !l.startsWith('│') && !l.startsWith('◇'))
-                    .join('\n');
-                resolve(lines.substring(0, 500) || 'Message received!');
-            } else {
-                log(`❌ Agent error: ${stderr.substring(0, 100)}`);
-                resolve('Sorry, I had trouble processing that.');
-            }
-        });
-
-        // Timeout after 60s
-        setTimeout(() => {
-            proc.kill();
-            resolve('Sorry, that took too long.');
-        }, 60000);
+  return new Promise(resolve => {
+    log(`🤖 Agent for: ${message.slice(0, 50)}`);
+    const proc = spawn('openclaw', ['agent', '--local', '--agent', 'main',
+      '--message', `WhatsApp msg from ${sender}: "${message}". Brief helpful response.`],
+      { env: { ...process.env } });
+    let stdout = '';
+    proc.stdout.on('data', d => stdout += d.toString());
+    const timer = setTimeout(() => { proc.kill(); resolve('Took too long.'); }, CONFIG.AGENT_TIMEOUT);
+    proc.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0) {
+        const lines = stdout.split('\n').filter(l => l.trim() && !l.startsWith('│') && !l.startsWith('◇')).join('\n');
+        resolve(lines.slice(0, 500) || 'Got it!');
+      } else resolve('Sorry, trouble.');
     });
+  });
 }
 
-async function sendWhatsAppMessage(sock, jid, text) {
+const processedIds = new Set();
+
+async function pollAndProcess() {
+  const sid = await getActiveSession();
+  if (!sid) { log('⏳ No session'); return false; }
+  const msgs = await getMessages(20);
+  const newMsgs = msgs.filter(m => m.direction === 'incoming' && !processedIds.has(m.id)).reverse();
+  for (const msg of newMsgs) {
+    processedIds.add(msg.id);
+    const text = msg.body || '';
+    if (!text.trim()) continue;
+    const sender = (msg.from || '').replace('@s.whatsapp.net', '').replace('@c.us', '');
+    log(`📩 ${sender}: ${text}`);
     try {
-        await sock.sendMessage(jid, { text });
-        log(`✅ Sent to ${jid}: ${text.substring(0, 50)}...`);
-    } catch (err) {
-        log(`❌ Send failed: ${err.message}`);
-    }
+      const resp = await sendAgentResponse(sender, text);
+      await sendText(msg.chatId || msg.from, resp);
+    } catch (e) { log(`❌ ${e.message}`); }
+  }
+  return true;
 }
 
-async function flushOutbox(sock) {
-    if (!fs.existsSync(OUTBOX_DIR)) {
-        fs.mkdirSync(OUTBOX_DIR, { recursive: true });
-        return;
-    }
-
-    const sentDir = path.join(OUTBOX_DIR, 'sent');
-    if (!fs.existsSync(sentDir)) {
-        fs.mkdirSync(sentDir, { recursive: true });
-    }
-
-    const msgFiles = fs.readdirSync(OUTBOX_DIR).filter(f => f.endsWith('.msg'));
-    if (msgFiles.length === 0) {
-        log('📭 Outbox empty, nothing to flush');
-        return;
-    }
-
-    log(`📬 Flushing ${msgFiles.length} queued outbox message(s)`);
-
-    for (const file of msgFiles) {
-        const filePath = path.join(OUTBOX_DIR, file);
-        try {
-            const raw = fs.readFileSync(filePath, 'utf8').trim();
-            if (!raw) {
-                log(`⚠️ Skipping empty file: ${file}`);
-                fs.unlinkSync(filePath);
-                continue;
-            }
-
-            let jid, message;
-
-            // Try JSON format: {"jid": "...", "message": "..."}
-            try {
-                const parsed = JSON.parse(raw);
-                if (parsed.jid && parsed.message) {
-                    jid = parsed.jid;
-                    message = parsed.message;
-                }
-            } catch (_) {
-                // Not JSON — fall through to plain-text format
-            }
-
-            // Plain-text format: first line = JID, rest = message body
-            if (!jid) {
-                const lines = raw.split('\n');
-                if (lines.length >= 2) {
-                    jid = lines[0].trim();
-                    message = lines.slice(1).join('\n').trim();
-                }
-            }
-
-            if (!jid || !message) {
-                log(`⚠️ Skipping malformed outbox file: ${file}`);
-                // Move to sent dir to avoid reprocessing
-                fs.renameSync(filePath, path.join(sentDir, file + '.malformed'));
-                continue;
-            }
-
-            await sock.sendMessage(jid, { text: message });
-            log(`📬 Flushed outbox: ${file} -> ${jid}`);
-
-            // Move to sent/ instead of deleting (audit trail)
-            fs.renameSync(filePath, path.join(sentDir, file));
-        } catch (err) {
-            log(`❌ Outbox flush failed for ${file}: ${err.message}`);
-            // Leave file in outbox for next flush attempt
-        }
-    }
+async function flushOutbox() {
+  if (!fs.existsSync(OUTBOX_DIR)) { fs.mkdirSync(OUTBOX_DIR, { recursive: true }); return; }
+  const sentDir = path.join(OUTBOX_DIR, 'sent');
+  if (!fs.existsSync(sentDir)) fs.mkdirSync(sentDir, { recursive: true });
+  const files = fs.readdirSync(OUTBOX_DIR).filter(f => f.endsWith('.msg'));
+  if (!files.length) return;
+  log(`📬 Flush ${files.length} outbox msg(s)`);
+  for (const file of files) {
+    const fp = path.join(OUTBOX_DIR, file);
+    try {
+      const raw = fs.readFileSync(fp, 'utf8').trim();
+      if (!raw) { fs.unlinkSync(fp); continue; }
+      let jid, msg;
+      try { const p = JSON.parse(raw); if (p.jid && p.message) { jid = p.jid; msg = p.message; } } catch {}
+      if (!jid) { const lines = raw.split('\n'); if (lines.length >= 2) { jid = lines[0].trim(); msg = lines.slice(1).join('\n').trim(); } }
+      if (!jid || !msg) { fs.renameSync(fp, path.join(sentDir, file + '.malformed')); continue; }
+      const sid = await getActiveSession();
+      if (sid) { await sendText(jid, msg); fs.renameSync(fp, path.join(sentDir, file)); }
+    } catch (e) { log(`❌ Outbox error: ${e.message}`); }
+  }
 }
 
+let pollCount = 0;
 async function main() {
-    log('🚀 OmniClaw Direct WhatsApp Bridge Starting');
-    
-    const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
-    
-    const sock = makeWASocket({
-        auth: state,
-        browser: ['OmniClaw', 'Desktop', '1.0.0']
-    });
+  log('🚀 OmniClaw OpenWA Bridge Starting');
+  const sid = await getActiveSession();
+  log(sid ? `✅ Session: ${sid}` : '⏳ No session');
 
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
-        if (qr) {
-            log('📱 QR Code received - scan with WhatsApp!');
-        }
-        
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            log(`⚠️ Connection closed. Reconnecting: ${shouldReconnect}`);
-            if (shouldReconnect) main();
-        } else if (connection === 'open') {
-            log('✅ WhatsApp Web connected!');
-            flushOutbox(sock);
-        }
-    });
-
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-        for (const msg of messages) {
-            // Skip own messages
-            if (msg.key.fromMe) continue;
-            
-            const jid = msg.key.remoteJid;
-            const sender = msg.key.participant || jid;
-            
-            // Get message text
-            let text = '';
-            if (msg.message?.conversation) {
-                text = msg.message.conversation;
-            } else if (msg.message?.extendedTextMessage?.text) {
-                text = msg.message.extendedTextMessage.text;
-            } else if (msg.message?.textMessage?.text) {
-                text = msg.message.textMessage.text;
-            }
-            
-            if (!text) continue;
-            
-            // Clean sender number
-            const senderNum = sender.replace('@s.whatsapp.net', '');
-            log(`📩 From ${senderNum}: ${text}`);
-            
-            // Send auto-reply
-            const response = await sendAgentResponse(senderNum, text);
-            await sendWhatsAppMessage(sock, jid, response);
-        }
-    });
-
-    // Keep process alive
-    process.on('SIGINT', () => {
-        log('👋 Shutting down...');
-        sock.end();
-        process.exit(0);
-    });
+  const loop = async () => {
+    try {
+      const ok = await pollAndProcess();
+      if (ok) await flushOutbox();
+    } catch (e) { log(`❌ ${e.message}`); }
+    pollCount++;
+    setTimeout(loop, CONFIG.POLL_INTERVAL_MS);
+  };
+  loop();
+  setInterval(() => log(`💓 ${pollCount} polls`), 60000);
+  process.on('SIGINT', () => { log('👋 Bye'); process.exit(0); });
 }
-
 main().catch(console.error);

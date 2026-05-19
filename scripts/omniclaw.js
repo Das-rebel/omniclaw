@@ -2,12 +2,43 @@
  * OmniClaw - WhatsApp Auto-Reply with Cloud AI + Vault + Multi-Voice
  * Version with auto-reconnect and connection management
  */
-const { 
-  makeWASocket, 
-  useMultiFileAuthState, 
-  makeCacheableSignalKeyStore,
-  fetchLatestBaileysVersion
-} = require('@whiskeysockets/baileys');
+// WhatsApp via OpenWA REST API (no Baileys)
+const http = require('http');
+const https = require('https');
+const OPENWA_URL = process.env.OPENWA_URL || 'http://localhost:2785';
+const OPENWA_KEY = process.env.OPENWA_KEY || 'dev-admin-key';
+let _openwaSession = null;
+function openwaReq(method, endpoint, body = null) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(OPENWA_URL + endpoint);
+    const mod = url.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname, method,
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': OPENWA_KEY },
+    }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } }); });
+    req.on('error', reject);
+    req.setTimeout(20000, () => { req.destroy(); reject(new Error('Timeout')); });
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+}
+async function getOpenwaSession() {
+  if (_openwaSession) return _openwaSession;
+  try {
+    const sessions = await openwaReq('GET', '/api/sessions');
+    if (Array.isArray(sessions)) {
+      const a = sessions.find(s => s.status === 'ready');
+      if (a) { _openwaSession = a.id; return a.id; }
+    }
+  } catch {}
+  return null;
+}
+async function openwaSendText(chatId, text) {
+  const sid = await getOpenwaSession();
+  if (!sid) throw new Error('No active WA session');
+  await openwaReq('POST', `/api/sessions/${sid}/messages/send-text`, { chatId, text });
+}
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -255,7 +286,6 @@ async function startOmniClaw() {
   console.log('═══════════════════════════════════════\n');
   
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const { version } = await fetchLatestBaileysVersion();
   
   sock = makeWASocket({
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys) },
