@@ -1,0 +1,43 @@
+# Docker Compose for Story Narrator Enhanced - Local Development
+
+version: '3.8'
+
+services:
+  story-narrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"  # Node.js main service
+      - "8081:8081"  # Kokoro TTS
+    environment:
+      - NODE_ENV=development
+      - KOKORO_PORT=8081
+      - KOKORO_HOST=localhost
+      - PORT=8080
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - CELEBRITY_TTS_URL=http://celebrity-tts:8080
+    volumes:
+      - ./src:/app/src
+      - ./kokoro:/app/kokoro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - story-net
+
+  celebrity-tts:
+    image: ghcr.io/das-rebel/celebrity-tts:latest
+    ports:
+      - "8082:8080"
+    environment:
+      - PORT=8080
+    networks:
+      - story-net
+
+networks:
+  story-net:
+    driver: bridge

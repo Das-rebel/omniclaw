@@ -1,0 +1,36 @@
+{
+  "name": "@omniclaw/story-narrator-enhanced",
+  "version": "2.0.0",
+  "description": "Merged Story Narrator with Kokoro-82M TTS, EPUB parsing, Celebrity voices, and speed control",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "kokoro": "python3 kokoro/tts_server.py",
+    "test": "node tests/story-narrator-test.js",
+    "deploy": "gcloud run deploy story-narrator-enhanced --source . --region asia-south1"
+  },
+  "keywords": [
+    "tts",
+    "kokoro",
+    "xtts",
+    "voice-synthesis",
+    "storytelling",
+    "narrator",
+    "audiobook",
+    "epub"
+  ],
+  "author": "OmniClaw Team",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0",
+    "axios": "^1.7.2",
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

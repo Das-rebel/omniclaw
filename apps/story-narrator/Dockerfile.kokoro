@@ -1,0 +1,30 @@
+# Story Narrator Enhanced Dockerfile
+# Multi-stage: Node.js + Python/Kokoro
+
+FROM python:3.11-slim as kokoro-stage
+
+WORKDIR /app
+
+# Install system dependencies for Kokoro
+RUN apt-get update && apt-get install -y \
+    espeak-ng \
+    libsndfile1 \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Kokoro Python dependencies
+COPY kokoro/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy Kokoro TTS server
+COPY kokoro/tts_server.py .
+
+# Expose port for Kokoro
+EXPOSE 8081
+
+# Health check for Kokoro
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')" || exit 1
+
+# Run Kokoro server
+CMD ["python", "tts_server.py"]

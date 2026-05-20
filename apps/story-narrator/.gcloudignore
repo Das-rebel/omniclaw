@@ -1,0 +1,11 @@
+node_modules
+.git
+*.log
+*.png
+*.jpg
+*.mp4
+*.wav
+*.mp3
+tmp
+.gitignore
+README.md

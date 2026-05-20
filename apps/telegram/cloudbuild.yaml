@@ -1,0 +1,8 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/omniclaw-personal-assistant/dasomni-bot:vFINAL', '.']
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/omniclaw-personal-assistant/dasomni-bot:vFINAL']
+images:
+- 'gcr.io/omniclaw-personal-assistant/dasomni-bot:vFINAL'
+timeout: '300s'
