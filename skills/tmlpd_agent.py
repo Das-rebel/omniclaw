@@ -26,6 +26,10 @@ from .workflows.orchestrator_executor import OrchestratorExecutor
 from .memory.agentic_memory import EpisodicMemoryStore
 from .memory.semantic_memory import SemanticMemoryStore
 from .memory.working_memory import WorkingMemoryCache
+from .memory.prompt_learning_store import PromptLearningStore
+from .memory.quality_classifier import QualityClassifier
+from .memory.self_critique_agent import SelfCritiqueAgent
+from .memory.prompt_learning_integration import PromptLearningIntegration
 
 
 class TMLPDUnifiedAgent:
@@ -91,6 +95,11 @@ class TMLPDUnifiedAgent:
         self.episodic_memory = None
         self.semantic_memory = None
         self.working_memory = None
+
+        # Prompt learning system
+        self.prompt_learning = None  # Initialized in initialize()
+        self.quality_classifier = None
+        self.self_critique = None
 
         # Statistics
         self.stats = {
@@ -172,10 +181,20 @@ class TMLPDUnifiedAgent:
         self.working_memory = WorkingMemoryCache()
         print("   ✓ Working memory (cache)")
 
+        # Initialize prompt learning system
+        print("\n🧠 Phase 3b: Prompt Learning System")
+        self.quality_classifier = QualityClassifier()
+        self.self_critique = SelfCritiqueAgent()
+        self.prompt_learning = PromptLearningIntegration(self)
+        print("   ✓ Quality classifier")
+        print("   ✓ Self-critique agent")
+        print("   ✓ Prompt learning integration")
+
         print("\n✅ TMLPD v2.1 Agent Ready!")
         print(f"   Multi-provider: ✓")
         print(f"   Difficulty-aware routing: ✓")
         print(f"   Advanced memory: ✓")
+        print(f"   Prompt learning: ✓")
         print(f"   Workflow executors: ✓")
         print(f"   Skill integration: ✓")
 
@@ -323,6 +342,14 @@ class TMLPDUnifiedAgent:
                 success=result.get("success", False)
             )
 
+        # Step 5b: Learn from response (prompt learning)
+        if self.prompt_learning:
+            learning_outcome = await self.prompt_learning.learn_from_response(task, result)
+            if learning_outcome.get("action") == "stored_pattern":
+                print(f"\n   📚 Stored prompt pattern: {learning_outcome.get('pattern_id', '')[:30]}...")
+            elif learning_outcome.get("action") == "analyzed_failure":
+                print(f"\n   🔧 Prompt improvement triggered (quality: {learning_outcome.get('quality', 0):.2f})")
+
         # Update statistics
         if result.get("success"):
             self.stats["successful_executions"] += 1
@@ -413,7 +440,8 @@ class TMLPDUnifiedAgent:
             "episodic_memory_stats": self.episodic_memory.get_stats(),
             "semantic_memory_stats": self.semantic_memory.get_stats(),
             "working_memory_stats": self.working_memory.get_stats(),
-            "learning_stats": self.difficulty_classifier.get_learning_stats() if self.enable_learning else {}
+            "learning_stats": self.difficulty_classifier.get_learning_stats() if self.enable_learning else {},
+            "prompt_learning_stats": self.prompt_learning.get_quality_trends() if self.prompt_learning else {}
         }
 
     async def cleanup(self):
