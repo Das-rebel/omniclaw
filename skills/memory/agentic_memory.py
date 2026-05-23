@@ -239,7 +239,7 @@ class EpisodicMemoryStore:
         """
         Extract keywords from text.
 
-        Removes common stop words and short words.
+        Removes common stop_words and short words.
         """
         # Stop words
         stop_words = {
@@ -255,7 +255,7 @@ class EpisodicMemoryStore:
         # Filter
         keywords = {
             w for w in words
-            if w not in stop words and len(w) > 2
+            if w not in stop_words and len(w) > 2
         }
 
         return keywords
