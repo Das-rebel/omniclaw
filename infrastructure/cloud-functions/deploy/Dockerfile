@@ -2,11 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir flask==3.1.0
+# Install from requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY serve_vault_search.py requirements.txt semantic_dashboard.html ./
-COPY learning_base/ ./learning_base/
+# Copy app files
+COPY serve_vault_search.py service.py ./
 
 ENV PORT=8080
 
-CMD ["python3", "-c", "from serve_vault_search import app; app.run(host='0.0.0.0', port=8080, debug=False, threaded=True)"]
+# Use gunicorn with multiple workers for production
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--timeout", "120", "service:application"]
