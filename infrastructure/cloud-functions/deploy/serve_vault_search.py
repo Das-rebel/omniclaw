@@ -34,6 +34,9 @@ WEIGHTS = {
     'vlTags': 0.05,          # Visual tags - almost ignored
 }
 
+# Minimum score threshold - results below this are filtered out
+MIN_SCORE_THRESHOLD = 0.8
+
 # Stopwords for keyword extraction
 STOPWORDS = {
     'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -46,7 +49,10 @@ STOPWORDS = {
     'us', 'our', 'you', 'your', 'please', 'help', 'thanks', 'thank',
     'just', 'like', 'really', 'actually', 'maybe', 'probably',
     'recently', 'recent', 'bookmark', 'bookmarks', 'bookmarked',
-    'bookbokmarked', 'bookmarking', 'find', 'show', 'list'
+    'bookbokmarked', 'bookmarking', 'find', 'show', 'list',
+    # Ambiguous terms that cause false matches
+    'linked',   # matches linkedin.com, linked to, etc - not just bookmarked links
+    'posted',   # too generic
 }
 
 def download_db():
@@ -183,6 +189,9 @@ def search(query: str, limit: int = 10, search_type: str = None) -> List[Dict]:
     
     # Sort by score (relevance) not timestamp
     results.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Filter by minimum score threshold to remove spurious matches
+    results = [r for r in results if r['score'] >= MIN_SCORE_THRESHOLD]
     
     return results[:limit]
 
