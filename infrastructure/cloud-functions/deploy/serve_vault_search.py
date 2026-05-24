@@ -151,6 +151,9 @@ def search(query: str, limit: int = 10, search_type: str = None) -> List[Dict]:
         hashtags = metadata.get('hashtags', [])
         entities = metadata.get('entities', [])
         visual_desc = metadata.get('visual_description', '')
+        vl_tags = metadata.get('vlTags', [])
+        
+        vl_tags = metadata.get('vlTags', [])
         
         results.append({
             'id': row['id'],
@@ -164,10 +167,14 @@ def search(query: str, limit: int = 10, search_type: str = None) -> List[Dict]:
             'hashtags': hashtags[:5] if isinstance(hashtags, list) else [],
             'entities': entities[:3] if isinstance(entities, list) else [],
             'visual_description': visual_desc[:200] if visual_desc else '',  # FIXED: was 50, now 200
-            'metadata': {  # Simplified metadata for response
+            'metadata': {
                 'topic': topic,
                 'topic_source': metadata.get('topic_source', 'unknown'),
-                'visual_description': visual_desc[:200] if visual_desc else ''  # FIXED: was 30, now 200
+                'visual_description': visual_desc[:200] if visual_desc else '',
+                'vlTags': vl_tags[:10] if isinstance(vl_tags, list) else [],
+                'vlMood': metadata.get('vlMood', ''),
+                'narrative': metadata.get('narrative', '')[:300] if metadata.get('narrative') else '',
+                'vision_provider': metadata.get('vision_provider', ''),
             }
         })
     
