@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Serve Vault Search v5 - Improved Content & Visual Discovery
+Serve Vault Search v4 - Text-First with Improved Topic Extraction
 
-Key improvements over v4:
-1. Content NOT truncated - full text returned (up to 2000 chars)
-2. Visual description given more weight (0.4 instead of 0.1)
-3. Better score differentiation - multiple bonus factors
-4. Full metadata returned including vlTags and narrative
-5. Topic fallback - if no topic, extract from content
+Key improvements over v3:
+1. Searches content field with high weight (not just metadata)
+2. Uses topic field from text extraction
+3. Ranks results by relevance (not just timestamp)
+4. Supports multi-field search with weighted scoring
+5. Extracts keywords properly from natural language queries
 """
 
 import os
@@ -23,16 +23,15 @@ app = Flask(__name__)
 GCS_BUCKET = 'omniclaw-knowledge-graph'
 DB_FILE = '/tmp/vault.db'
 
-# IMPROVED weights - visual is no longer ignored
+# Search field weights (text >> topic >> visual)
 WEIGHTS = {
-    'content': 1.0,           
-    'hashtags': 0.9,          
-    'topic': 0.8,             
-    'entities': 0.7,          
-    'name': 0.5,             
-    'visual_description': 0.4,  # INCREASED from 0.1 - now meaningful
-    'vlTags': 0.3,           # INCREASED from 0.05
-    'narrative': 0.6,        # NEW - AI summary of content
+    'content': 1.0,           # Post text - HIGHEST
+    'hashtags': 0.9,          # Extracted hashtags - very high (explicit signal)
+    'topic': 0.8,             # Extracted topic from text
+    'entities': 0.7,          # Named entities from text
+    'name': 0.5,             # Username/title
+    'visual_description': 0.1,  # What image shows - LOWEST
+    'vlTags': 0.05,          # Visual tags - almost ignored
 }
 
 # Stopwords for keyword extraction
@@ -44,8 +43,7 @@ STOPWORDS = {
     'want', 'need', 'look', 'up', 'search', 'get', 'give', 'some', 'ideas',
     'about', 'what', 'how', 'who', 'when', 'where', 'why', 'which', 'that',
     'this', 'these', 'those', 'it', 'its', 'they', 'them', 'their', 'we',
-    'us', 'our', 'you', 'your', 'please', 'help', 'thanks', 'thank',
-    'just', 'like', 'really', 'actually', 'maybe', 'probably', 'definitely'
+    'us', 'our', 'you', 'your', 'please', 'help', 'thanks', 'thank'
 }
 
 def download_db():
@@ -86,45 +84,22 @@ def extract_keywords(query: str) -> Tuple[List[str], List[str]]:
     words = query.lower().split()
     keywords = [w for w in words if w not in STOPWORDS and len(w) > 2]
     
-    # Extract bigrams (two-word phrases)
+    # Extract bigrams
     bigrams = []
     for i in range(len(words) - 1):
         if words[i] not in STOPWORDS and words[i+1] not in STOPWORDS:
             bigrams.append(f'{words[i]} {words[i+1]}')
     
-    return keywords[:8], bigrams[:5]
-
-def extract_topic_from_content(content: str) -> str:
-    """Fallback: extract topic from content if metadata.topic is empty"""
-    content_lower = content.lower()
-    
-    # Topic keywords
-    topic_map = {
-        'AI & Machine Learning': ['ai', 'machine learning', 'llm', 'gpt', 'neural', 'model', 'training', 'deep learning'],
-        'Programming': ['code', 'programming', 'python', 'javascript', 'rust', 'function', 'api', 'bug', 'debug'],
-        'Web Development': ['react', 'vue', 'angular', 'html', 'css', 'frontend', 'backend', 'http'],
-        'System Design': ['architecture', 'microservice', 'database', 'cache', 'scaling', 'load balancer'],
-        'Startup & Business': ['startup', 'funding', 'revenue', 'saas', 'customer', 'product', 'launch'],
-        'Design': ['figma', 'ui', 'ux', 'design', 'prototype', 'wireframe', 'typography'],
-        'Data Science': ['data', 'analytics', 'pandas', 'numpy', 'visualization', 'statistics'],
-        'Cloud & DevOps': ['aws', 'gcp', 'azure', 'kubernetes', 'docker', 'ci/cd', 'deployment'],
-        'Mobile': ['ios', 'android', 'swift', 'kotlin', 'react native', 'flutter', 'app'],
-        'Security': ['security', 'vulnerability', 'encryption', 'auth', 'oauth', 'jwt', 'https'],
-    }
-    
-    for topic, keywords in topic_map.items():
-        if sum(1 for kw in keywords if kw in content_lower) >= 2:
-            return topic
-    
-    return ''
+    return keywords[:5], bigrams[:3]
 
 def search(query: str, limit: int = 10, search_type: str = None) -> List[Dict]:
-    """Search with improved content and visual discovery"""
+    """Search with text-first priority and relevance scoring"""
     
     keywords, bigrams = extract_keywords(query)
     all_terms = keywords + bigrams
     
     if not all_terms:
+        # No meaningful keywords - return recent
         all_terms = [query.lower()]
     
     conn = sqlite3.connect(DB_FILE)
@@ -136,6 +111,7 @@ def search(query: str, limit: int = 10, search_type: str = None) -> List[Dict]:
     params = []
     
     for term in all_terms:
+        # Search in content (highest weight), name, and metadata
         conditions.append("""
             (LOWER(n.content) LIKE ? OR 
              LOWER(n.name) LIKE ? OR 
@@ -149,14 +125,13 @@ def search(query: str, limit: int = 10, search_type: str = None) -> List[Dict]:
         where_sql = f'({where_sql}) AND n.type = ?'
         params.append(search_type)
     
-    # Fetch more for better re-ranking
     cur.execute(f"""
         SELECT n.id, n.type, n.name, n.content, n.url, n.timestamp, n.metadata
         FROM nodes n
         WHERE {where_sql}
         ORDER BY n.timestamp DESC
         LIMIT ?
-    """, params + [limit * 3])
+    """, params + [limit * 2])  # Fetch more for re-ranking
     
     rows = cur.fetchall()
     conn.close()
@@ -168,49 +143,33 @@ def search(query: str, limit: int = 10, search_type: str = None) -> List[Dict]:
         except:
             metadata = {}
         
-        # Calculate improved relevance score
+        # Calculate relevance score
         score = calculate_score(query, row, metadata, all_terms)
         
-        # Extract info
-        content = row['content'] or ''
+        # Extract topic info
         topic = metadata.get('topic', '')
         hashtags = metadata.get('hashtags', [])
         entities = metadata.get('entities', [])
         visual_desc = metadata.get('visual_description', '')
-        vl_tags = metadata.get('vlTags', [])
-        narrative = metadata.get('narrative', '')
         
-        # Fallback: extract topic from content if missing
-        if not topic and content:
-            topic = extract_topic_from_content(content)
-        
-        # Build result - NO TRUNCATION on content (up to 2000 chars)
-        result = {
+        results.append({
             'id': row['id'],
             'type': row['type'],
             'name': row['name'] or '',
-            'content': content[:2000] if content else '',  # INCREASED from 200
+            'content': (row['content'] or '')[:1000],  # FIXED: was 200, now 1000
             'url': row['url'] or '',
             'timestamp': row['timestamp'] or '',
             'score': round(score, 3),
             'topic': topic,
-            'hashtags': hashtags[:10] if isinstance(hashtags, list) else [],  # INCREASED from 5
-            'entities': entities[:5] if isinstance(entities, list) else [],  # INCREASED from 3
-            'visual_description': visual_desc[:300] if visual_desc else '',  # INCREASED from 50
-            # FULL metadata now returned
-            'metadata': {
+            'hashtags': hashtags[:5] if isinstance(hashtags, list) else [],
+            'entities': entities[:3] if isinstance(entities, list) else [],
+            'visual_description': visual_desc[:200] if visual_desc else '',  # FIXED: was 50, now 200
+            'metadata': {  # Simplified metadata for response
                 'topic': topic,
                 'topic_source': metadata.get('topic_source', 'unknown'),
-                'visual_description': visual_desc[:300] if visual_desc else '',
-                'vlTags': vl_tags[:10] if isinstance(vl_tags, list) else [],  # NEW
-                'narrative': narrative[:500] if narrative else '',  # NEW
-                'sentiment': metadata.get('sentiment', ''),
-                'mood': metadata.get('vlMood', ''),
-                'style': metadata.get('vlStyle', ''),
+                'visual_description': visual_desc[:200] if visual_desc else ''  # FIXED: was 30, now 200
             }
-        }
-        
-        results.append(result)
+        })
     
     # Sort by score (relevance) not timestamp
     results.sort(key=lambda x: x['score'], reverse=True)
@@ -218,7 +177,7 @@ def search(query: str, limit: int = 10, search_type: str = None) -> List[Dict]:
     return results[:limit]
 
 def calculate_score(query: str, row: sqlite3.Row, metadata: Dict, terms: List[str]) -> float:
-    """Calculate improved relevance score with better differentiation"""
+    """Calculate relevance score based on multiple signals"""
     score = 0.0
     content_text = ((row['content'] or '') + ' ' + (row['name'] or '')).lower()
     query_lower = query.lower()
@@ -227,35 +186,15 @@ def calculate_score(query: str, row: sqlite3.Row, metadata: Dict, terms: List[st
     if query_lower in content_text:
         score += WEIGHTS['content']
     
-    # 2. Individual term matches with multiple weight checks
+    # 2. Individual term matches
     for term in terms:
-        term_matches = 0
-        
-        # Content match (with bonus for multiple occurrences)
+        # Content match
         if term in content_text:
-            term_matches += 1
-            count = content_text.count(term)
-            score += WEIGHTS['content'] * min(count * 0.2, 0.5)  # Bonus for repetition
+            score += WEIGHTS['content'] * 0.5
         
-        # Visual description match - NOW MEANINGFUL
-        visual_desc = (metadata.get('visual_description', '') or '').lower()
-        if term in visual_desc:
-            term_matches += 1
-            score += WEIGHTS['visual_description'] * 0.5
-        
-        # vlTags match - NOW MEANINGFUL
-        vl_tags = metadata.get('vlTags', [])
-        if isinstance(vl_tags, list):
-            for tag in vl_tags:
-                if term in tag.lower():
-                    term_matches += 1
-                    score += WEIGHTS['vlTags']
-                    break
-        
-        # Topic match
+        # Topic match (if topic field exists)
         topic = metadata.get('topic', '').lower()
         if topic and term in topic:
-            term_matches += 1
             score += WEIGHTS['topic']
         
         # Hashtags match (very high - explicit signal)
@@ -263,34 +202,20 @@ def calculate_score(query: str, row: sqlite3.Row, metadata: Dict, terms: List[st
         if isinstance(hashtags, list):
             for ht in hashtags:
                 if term in ht.lower():
-                    term_matches += 1
-                    score += WEIGHTS['hashtags'] * 0.3
-                    break
-        
-        # Narrative match (NEW)
-        narrative = (metadata.get('narrative', '') or '').lower()
-        if term in narrative:
-            term_matches += 1
-            score += WEIGHTS['narrative'] * 0.3
+                    score += WEIGHTS['hashtags'] * 0.5
         
         # Name match
         name = (row['name'] or '').lower()
         if term in name:
-            term_matches += 1
             score += WEIGHTS['name']
-        
-        # Bonus for matching multiple aspects
-        if term_matches >= 3:
-            score += 0.2  # Strong match bonus
     
-    # 3. Boost for ALL terms matching (not just some)
+    # 3. Boost for multiple term matches
     matched_terms = sum(1 for t in terms if t in content_text)
-    if matched_terms == len(terms):
-        score += 0.5  # Perfect match bonus
-    elif matched_terms > 1:
+    if matched_terms > 1:
         score += matched_terms * 0.1
     
-    # 4. Recency boost (smaller than before to not overpower relevance)
+    # 4. Small timestamp boost (prefer recent within similar relevance)
+    # This prevents old posts from dominating
     try:
         from datetime import datetime
         timestamp = row['timestamp'] or ''
@@ -298,20 +223,13 @@ def calculate_score(query: str, row: sqlite3.Row, metadata: Dict, terms: List[st
             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
             age_days = (datetime.now() - dt.replace(tzinfo=None)).days
             if age_days < 7:
-                score += 0.1
-            elif age_days < 30:
                 score += 0.05
-            elif age_days < 90:
+            elif age_days < 30:
                 score += 0.02
     except:
         pass
     
-    # 5. Type bonus (tweets might need more recency, posts can be timeless)
-    row_type = row['type'] or ''
-    if 'post' in row_type.lower() or 'article' in row_type.lower():
-        score += 0.05  # Slight boost for substantive content
-    
-    return min(score, 15.0)  # Cap at 15 (increased from 10)
+    return min(score, 10.0)  # Cap at 10
 
 @app.route('/search')
 def search_endpoint():
@@ -348,9 +266,8 @@ def search_simple():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     
-    # Return more content in simple search too
     cur.execute("""
-        SELECT id, type, name, substr(content, 1, 500) as content, url, timestamp
+        SELECT id, type, name, substr(content, 1, 150) as content, url, timestamp
         FROM nodes 
         WHERE LOWER(content) LIKE ? OR LOWER(name) LIKE ?
         ORDER BY timestamp DESC
