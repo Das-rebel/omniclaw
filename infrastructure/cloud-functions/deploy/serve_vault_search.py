@@ -53,6 +53,7 @@ STOPWORDS = {
     # Ambiguous terms that cause false matches
     'linked',   # matches linkedin.com, linked to, etc - not just bookmarked links
     'posted',   # too generic
+    'repos',    # 79% false positive rate - 'repos' matches 'repost', 'repository', etc
 }
 
 def download_db():
