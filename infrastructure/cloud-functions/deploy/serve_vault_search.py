@@ -43,7 +43,10 @@ STOPWORDS = {
     'want', 'need', 'look', 'up', 'search', 'get', 'give', 'some', 'ideas',
     'about', 'what', 'how', 'who', 'when', 'where', 'why', 'which', 'that',
     'this', 'these', 'those', 'it', 'its', 'they', 'them', 'their', 'we',
-    'us', 'our', 'you', 'your', 'please', 'help', 'thanks', 'thank'
+    'us', 'our', 'you', 'your', 'please', 'help', 'thanks', 'thank',
+    'just', 'like', 'really', 'actually', 'maybe', 'probably',
+    'recently', 'recent', 'bookmark', 'bookmarks', 'bookmarked',
+    'bookbokmarked', 'bookmarking', 'find', 'show', 'list'
 }
 
 def download_db():
