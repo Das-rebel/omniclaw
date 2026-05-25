@@ -64,8 +64,8 @@ class GreenAPI {
   }
 
   // ─── File/Image/Video by URL ──────────────────────
-  async sendFileByUrl(chatId, url, fileName, caption) {
-    const result = await this._post('sendFileByUrl', { chatId, url, fileName, caption });
+  async sendFileByUrl(chatId, urlFile, fileName, caption) {
+    const result = await this._post('sendFileByUrl', { chatId, urlFile, fileName, caption });
     return result.ok ? result.data : result;
   }
 

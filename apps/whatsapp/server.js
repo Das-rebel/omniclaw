@@ -89,6 +89,31 @@ async function checkEndpoint(name) {
 // ─── Vault Search — imported from vault-search.js ─────
 const { searchVault, buildVaultResult, extractKeywords, getVaultUrls } = require('./vault-search');
 
+// ─── Vault Rankings (learning from usage) ────────────
+const VAULT_RANKS_FILE = '/tmp/vault_ranks.json';
+let vaultRanks = {};
+try {
+  if (fs.existsSync(VAULT_RANKS_FILE)) {
+    vaultRanks = JSON.parse(fs.readFileSync(VAULT_RANKS_FILE, 'utf8'));
+  }
+} catch (e) {
+  console.error('\u26a0\ufe0f Failed to load vault ranks:', e.message);
+}
+
+setInterval(() => {
+  try {
+    fs.writeFileSync(VAULT_RANKS_FILE, JSON.stringify(vaultRanks));
+  } catch (e) {
+    console.error('\u26a0\ufe0f Failed to save vault ranks:', e.message);
+  }
+}, 60000);
+
+function trackVaultView(items) {
+  for (const item of items) {
+    if (item.id) vaultRanks[item.id] = (vaultRanks[item.id] || 0) + 1;
+  }
+}
+
 // ─── Reminders (persistent JSON file) ────────────────
 const REMINDERS_FILE = '/tmp/omniclaw_wa_reminders.json';
 function loadReminders() {
@@ -244,6 +269,19 @@ async function handleVault(phone, text) {
 
   // Get initial results
   let result = await searchVault(query);
+
+  // ─── Tag Drill-Down (#7) ──
+  if (result && result.isTagView) {
+    const tags = result.tags || {};
+    const sorted = Object.entries(tags).sort((a, b) => b[1] - a[1]);
+    if (!sorted.length) return waSend(phone, '🏷 No tags found for "' + query + '".');
+    const tagLines = ['🏷 *Tags in "' + result.query + '"*\n'];
+    for (const [tag, count] of sorted.slice(0, 20)) {
+      tagLines.push('· ' + tag + ' (' + count + ')');
+    }
+    return waSend(phone, tagLines.join('\n'));
+  }
+
   let items = result && result.results ? result.results : [];
   
   // If few results, try broader/hybrid queries automatically
@@ -282,7 +320,23 @@ async function handleVault(phone, text) {
   }
   items = validItems;
   
-  await waSend(phone, '🔍 *Vault Search:* "' + query + '"\n📊 ' + result.total + ' (' + validItems.length + ' with links' + (entitySkipped > 0 ? ', ' + entitySkipped + ' names hidden' : '') + ')');
+  // ─── Summary mode ──
+  if (result.isSummary) {
+    const summary = '*Vault Summary: "' + result.query + '"*\n\n' +
+      items.slice(0, 5).map((item, i) => {
+        const icon = (item.source || item.type || '').startsWith('twitter') ? '\u{1F426}' : '\u{1F4F7}';
+        const name = (item.name || item.content || '').slice(0, 60).replace('\n', ' ');
+        return icon + ' ' + name;
+      }).join('\n') +
+      '\n\n\u{1F4CA} ' + items.length + ' total results';
+    return waSend(phone, summary);
+  }
+  
+  let headerLine = '🔍 *Vault Search:* "' + result.query + '"\n📊 ' + result.total + ' results';
+  if (result.after) headerLine += ' (since ' + result.after + ')';
+  if (result.before) headerLine += ' (before ' + result.before + ')';
+  headerLine += ' (' + validItems.length + ' with links' + (entitySkipped > 0 ? ', ' + entitySkipped + ' names hidden' : '') + ')';
+  await waSend(phone, headerLine);
 
   console.log('📊 Vault: type=' + items[0].type + ' source=' + items[0].source + ' total=' + items.length);
   
@@ -327,6 +381,40 @@ async function handleVault(phone, text) {
     .map(([k, v]) => (summaryIcons[k] || '🔗') + ' ' + k + ': ' + v)
     .join(' · ');
   if (sourceSummary) await waSend(phone, '📊 *Breakdown*: ' + sourceSummary);
+
+  // ─── Related Searches (#5) ──
+  const allEntities = [];
+  for (const item of items.slice(0, 10)) {
+    if (item.entities && Array.isArray(item.entities)) allEntities.push(...item.entities);
+    if (item.metadata?.topic) allEntities.push(item.metadata.topic);
+  }
+  const queryKeywords = extractKeywords(query).map(k => k.toLowerCase());
+  const suggestions = [...new Set(allEntities)]
+    .filter(e => !queryKeywords.some(k => e.toLowerCase().includes(k)))
+    .slice(0, 3);
+  if (suggestions.length > 0) {
+    await waSend(phone, '💡 Also try: ' + suggestions.map(s => '/vault ' + s).join(' · '));
+  }
+
+  // ─── OG Image Previews for top 3 results (#6) ──
+  for (const item of items.slice(0, 3)) {
+    if (!item.url) continue;
+    try {
+      const html = await fetch(item.url, { signal: AbortSignal.timeout(5000) }).then(r => r.text()).catch(() => '');
+      const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+      if (ogMatch && ogMatch[1]) {
+        const imgUrl = ogMatch[1].startsWith('http') ? ogMatch[1] : new URL(ogMatch[1], item.url).href;
+        const chatId = phone.includes('@') ? phone : phone + '@c.us';
+        await api.sendFileByUrl(chatId, imgUrl, 'preview.jpg', item.name.slice(0, 100));
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    } catch (e) {
+      // silent — preview is optional
+    }
+  }
+
+  // ─── Track vault views for learning rankings (#10) ──
+  trackVaultView(items);
 
   if (result.total > 10) {
     await waSend(phone, '📋 +' + (result.total - 10) + ' more results. Try a more specific query: /vault ' + query + ' <keyword>');

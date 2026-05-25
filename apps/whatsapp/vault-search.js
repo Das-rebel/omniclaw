@@ -63,6 +63,22 @@ async function loadUrlLookup() {
   }
 }
 
+// ─── Vault Stats Cache ──────────────────────────────────
+let vaultStatsCache = null;
+let vaultStatsTime = 0;
+
+async function getVaultStats() {
+  if (vaultStatsCache && Date.now() - vaultStatsTime < 600000) return vaultStatsCache;
+  try {
+    const data = await httpGet(VAULT_SEARCH_URL + '/stats', 10000);
+    vaultStatsCache = data;
+    vaultStatsTime = Date.now();
+    return data;
+  } catch (e) {
+    return vaultStatsCache || { total: 0 };
+  }
+}
+
 // Preload lookup on startup
 setTimeout(() => loadUrlLookup(), 3000);
 
@@ -140,7 +156,49 @@ function enrichResult(fr, lookup) {
 // ─── Search ─────────────────────────────────────────────
 
 async function searchVault(query) {
-  const hybridQueries = buildHybridQueries(query);
+  // -- Parse special flags before building queries --
+  const isSummary = /\s*--summary\s*$/i.test(query);
+  let cleanQuery = isSummary ? query.replace(/\s*--summary\s*$/i, '').trim() : query;
+
+  let isTagView = false;
+  let afterDate = null;
+  let beforeDate = null;
+  let filteredBy = null;
+
+  if (/\s*--twitter\b/i.test(cleanQuery)) {
+    filteredBy = 'twitter';
+    cleanQuery = cleanQuery.replace(/\s*--twitter\b/gi, '').trim();
+  } else if (/\s*--instagram\b/i.test(cleanQuery)) {
+    filteredBy = 'instagram';
+    cleanQuery = cleanQuery.replace(/\s*--instagram\b/gi, '').trim();
+  }
+
+  if (/--tags\b/.test(cleanQuery)) {
+    isTagView = true;
+    cleanQuery = cleanQuery.replace(/--tags\b/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  const afterMatch = cleanQuery.match(/--after\s+(\d{4}-\d{2}-\d{2})/);
+  if (afterMatch) {
+    afterDate = new Date(afterMatch[1] + 'T00:00:00Z');
+    cleanQuery = cleanQuery.replace(afterMatch[0], '').replace(/\s+/g, ' ').trim();
+  }
+
+  const beforeMatch = cleanQuery.match(/--before\s+(\d{4}-\d{2}-\d{2})/);
+  if (beforeMatch) {
+    beforeDate = new Date(beforeMatch[1] + 'T23:59:59Z');
+    cleanQuery = cleanQuery.replace(beforeMatch[0], '').replace(/\s+/g, ' ').trim();
+  }
+
+  if (!cleanQuery.trim()) {
+    if (isTagView) return { query: '', total: 0, tags: {}, isTagView: true };
+    const base = { query: '', total: 0, results: [], isSummary: false };
+    if (afterDate) base.after = afterDate.toISOString().slice(0, 10);
+    if (beforeDate) base.before = beforeDate.toISOString().slice(0, 10);
+    return base;
+  }
+
+  const hybridQueries = buildHybridQueries(cleanQuery);
   let allItems = [];
   const seenIds = new Set();
 
@@ -162,13 +220,81 @@ async function searchVault(query) {
 
   const lookup = await loadUrlLookup();
   if (allItems.length) {
-    return {
-      query,
-      total: allItems.length,
-      results: allItems.slice(0, 12).map(fr => enrichResult(fr, lookup)),
+    let enriched = allItems.map(fr => enrichResult(fr, lookup));
+
+    // Filter by date range if specified
+    if (afterDate) {
+      enriched = enriched.filter(item => {
+        const ts = item.timestamp ? new Date(item.timestamp) : null;
+        return ts && ts >= afterDate;
+      });
+    }
+    if (beforeDate) {
+      enriched = enriched.filter(item => {
+        const ts = item.timestamp ? new Date(item.timestamp) : null;
+        return ts && ts <= beforeDate;
+      });
+    }
+
+    // Tag drill-down: aggregate entities/topics across ALL results
+    if (isTagView) {
+      const aggregatedTags = {};
+      for (const item of enriched) {
+        if (item.entities && Array.isArray(item.entities)) {
+          for (const e of item.entities) {
+            const key = typeof e === 'string' ? e : (e.name || e);
+            if (key) aggregatedTags[key] = (aggregatedTags[key] || 0) + 1;
+          }
+        }
+        if (item.metadata?.topic) {
+          aggregatedTags[item.metadata.topic] = (aggregatedTags[item.metadata.topic] || 0) + 1;
+        }
+        if (item.metadata?.vlTags) {
+          for (const t of item.metadata.vlTags) {
+            if (t) aggregatedTags[t] = (aggregatedTags[t] || 0) + 1;
+          }
+        }
+      }
+      return { query: cleanQuery, total: enriched.length, tags: aggregatedTags, isTagView: true };
+    }
+
+    // URL Dedup: remove items with duplicate URLs
+    const seenUrls = new Set();
+    enriched = enriched.filter(item => {
+      if (!item.url) return true;
+      if (seenUrls.has(item.url)) return false;
+      seenUrls.add(item.url);
+      return true;
+    });
+
+    // Source filter: apply --twitter or --instagram flag
+    if (filteredBy) {
+      enriched = enriched.filter(item => {
+        const rawSource = item.source || item.type || '';
+        if (rawSource.startsWith(filteredBy)) return true;
+        if (filteredBy === 'twitter' && item.id && item.id.startsWith('tw_')) return true;
+        if (filteredBy === 'instagram' && item.id && item.id.startsWith('ig_')) return true;
+        return false;
+      });
+    }
+
+    const base = {
+      query: cleanQuery,
+      total: enriched.length,
+      results: enriched.slice(0, 12),
+      isSummary: isSummary && cleanQuery.length > 0,
     };
+    if (afterDate) base.after = afterDate.toISOString().slice(0, 10);
+    if (beforeDate) base.before = beforeDate.toISOString().slice(0, 10);
+    if (filteredBy) base.filteredBy = filteredBy;
+    return base;
   }
-  return { query, total: 0, results: [] };
+
+  const base = { query: cleanQuery, total: 0, results: [], isSummary: isSummary && cleanQuery.length > 0 };
+  if (afterDate) base.after = afterDate.toISOString().slice(0, 10);
+  if (beforeDate) base.before = beforeDate.toISOString().slice(0, 10);
+  if (filteredBy) base.filteredBy = filteredBy;
+  return base;
 }
 
 // ─── Result Formatting ──────────────────────────────────
@@ -243,4 +369,4 @@ function buildVaultResult(item, index) {
   return (index + 1) + '. ' + icon + ' ' + lines.join('\n   ');
 }
 
-module.exports = { searchVault, buildVaultResult, extractKeywords, getVaultUrls };
+module.exports = { searchVault, buildVaultResult, extractKeywords, getVaultUrls, getVaultStats };
