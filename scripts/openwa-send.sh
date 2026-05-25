@@ -1,24 +1,41 @@
 #!/bin/bash
-#
 # OpenWA Send - Send WhatsApp message via OpenWA REST API
-# Usage:
-#   ./openwa-send.sh <jid> <message>
-#   echo "message" | ./openwa-send.sh <jid> -
-#
-# Environment:
-#   OPENWA_URL      - API base (default: http://localhost:2785)
-#   OPENWA_KEY      - API key (default: dev-admin-key)
-#   OPENWA_SESSION  - Session ID (default: auto-detect active)
+# Auto-detects cloud session if local not available
 set -euo pipefail
 
-OPENWA_URL="${OPENWA_URL:-http://localhost:2785}"
+OPENWA_URL="${OPENWA_URL:-}"
 OPENWA_KEY="${OPENWA_KEY:-dev-admin-key}"
 OPENWA_SESSION="${OPENWA_SESSION:-}"
 
-# Auto-detect session if not set
-if [ -z "$OPENWA_SESSION" ]; then
-  OPENWA_SESSION=$(curl -sf "${OPENWA_URL}/api/sessions" \
-    -H "X-API-Key: ${OPENWA_KEY}" | python3 -c "
+# If no URL provided, try cloud first, then local
+if [ -z "$OPENWA_URL" ]; then
+  # Try cloud first (for 24/7 operation)
+  CLOUD_URL="https://openwa-api-338789220059.asia-south1.run.app"
+  
+  # Check if cloud has active session
+  CLOUD_SESSIONS=$(curl -sf -s "${CLOUD_URL}/api/sessions" -H "X-API-Key: ${OPENWA_KEY}" 2>/dev/null | python3 -c "
+import json,sys
+try:
+    sessions = json.load(sys.stdin)
+    active = [s for s in sessions if s.get('status') == 'ready']
+    if active:
+        print(active[0]['id'])
+    else:
+        print('')
+except:
+    print('')
+" 2>/dev/null) || CLOUD_SESSIONS=""
+  
+  if [ -n "$CLOUD_SESSIONS" ]; then
+    OPENWA_URL="$CLOUD_URL"
+    OPENWA_SESSION="$CLOUD_SESSIONS"
+    echo "[OpenWA] Using cloud session: $OPENWA_SESSION"
+  else
+    # Fall back to local
+    OPENWA_URL="http://localhost:2785"
+    # Auto-detect local session
+    OPENWA_SESSION=$(curl -sf -s "${OPENWA_URL}/api/sessions" \
+      -H "X-API-Key: ${OPENWA_KEY}" | python3 -c "
 import json,sys
 try:
     sessions = json.load(sys.stdin)
@@ -26,47 +43,33 @@ try:
     print(active[0]['id'] if active else '')
 except: print('')
 " 2>/dev/null) || true
+  fi
 fi
 
-TARGET_JID="$1"
-shift || true
-
-if [ -z "$TARGET_JID" ]; then
-  echo "Usage: $0 <jid> [message]" >&2
-  exit 1
-fi
-
-# Get message from args or stdin
-if [ "${1:-}" = "-" ]; then
-  MESSAGE=$(cat)
-elif [ -n "${1:-}" ]; then
-  MESSAGE="$*"
-else
-  echo "Error: No message provided" >&2
-  exit 1
-fi
-
+# If still no session, error
 if [ -z "$OPENWA_SESSION" ]; then
-  echo "[OpenWA] No active session" >&2
+  echo "[OpenWA] ERROR: No active WhatsApp session found"
+  echo "[OpenWA] Cloud: https://openwa-api-338789220059.asia-south1.run.app"
+  echo "[OpenWA] Local: http://localhost:2785"
   exit 1
 fi
 
-PAYLOAD=$(python3 -c "
-import json,sys
-msg = sys.argv[1]
-print(json.dumps({'chatId': sys.argv[2], 'text': msg}))
-" "$MESSAGE" "$TARGET_JID")
+JID="${1:-}"
+MESSAGE="${2:-}"
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-  "${OPENWA_URL}/api/sessions/${OPENWA_SESSION}/messages/send-text" \
+if [ -z "$JID" ] || [ -z "$MESSAGE" ] || [ "$JID" = "-" ]; then
+  echo "Usage: openwa-send.sh <jid> <message>"
+  echo "   or: echo 'message' | openwa-send.sh <jid> -"
+  exit 1
+fi
+
+# Send message
+RESP=$(curl -sf -s -X POST "${OPENWA_URL}/api/sessions/${OPENWA_SESSION}/messages/send-text" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ${OPENWA_KEY}" \
-  -d "$PAYLOAD")
-
-if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-  echo "[OpenWA] Sent to ${TARGET_JID}"
-  exit 0
-else
-  echo "[OpenWA] Failed (HTTP ${HTTP_CODE})" >&2
+  -d "{\"chatId\":\"${JID}\",\"text\":\"${MESSAGE}\"}" 2>&1) || {
+  echo "[OpenWA] Send failed: $RESP"
   exit 1
-fi
+}
+
+echo "[OpenWA] Sent to $JID: $MESSAGE"

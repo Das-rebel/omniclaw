@@ -36,19 +36,17 @@ def _parse_gcs_uri(uri: str) -> tuple[str, str]:
 
 
 def read_from_gcs() -> list[dict]:
-    """Read instagram JSON from GCS via gsutil."""
-    import subprocess
-    bucket, path = _parse_gcs_uri(f"{GCS_BUCKET}/{GCS_INSTAGRAM_PATH}")
+    """Read instagram JSON from GCS via google-cloud-storage library."""
     try:
-        result = subprocess.run(
-            ["gsutil", "cat", f"gs://{bucket}/{path}"],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            if isinstance(data, list):
-                log(f"Read {len(data)} items from GCS")
-                return data
+        from google.cloud import storage
+        bucket_name = GCS_BUCKET.replace("gs://", "")
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(GCS_INSTAGRAM_PATH)
+        data = json.loads(blob.download_as_text())
+        if isinstance(data, list):
+            log(f"Read {len(data)} items from GCS")
+            return data
     except Exception as e:
         log(f"GCS read failed: {e}")
     return []
@@ -142,7 +140,9 @@ async def scrape_via_instagrapi() -> list[dict]:
 
 
 def normalize_instagram(raw: dict) -> dict:
-    """Normalize a raw Instagram post dict to unified bookmark format."""
+    """Normalize a raw Instagram post dict to unified bookmark format.
+    Downloads the image and runs Ollama llava to generate visual descriptions.
+    """
     code = raw.get("code", raw.get("shortcode", ""))
     url = raw.get("url", raw.get("permalink", f"https://www.instagram.com/p/{code}/" if code else ""))
     caption = raw.get("caption", raw.get("content", raw.get("text", "")))
@@ -164,8 +164,7 @@ def normalize_instagram(raw: dict) -> dict:
         metadata["mediaType"] = media_type
 
     source_id = raw.get("id", code or url)
-
-    return {
+    result = {
         "source": "instagram",
         "source_id": str(source_id),
         "url": url,
@@ -175,6 +174,121 @@ def normalize_instagram(raw: dict) -> dict:
         "scraped_at": scraped_at,
         "metadata": metadata,
     }
+
+    # Enrich with vision analysis (Ollama llava)
+    vision_result = _analyze_instagram_image(image_url, caption)
+    if vision_result:
+        result["metadata"].update(vision_result)
+
+    return result
+
+
+def _analyze_instagram_image(image_url: str, caption: str) -> dict | None:
+    """Download Instagram image and analyze with Ollama llava vision model.
+    Returns enriched metadata dict or None on failure.
+    """
+    if not image_url:
+        return None
+
+    import urllib.request
+    import base64
+    import json
+    import subprocess
+    import tempfile
+
+    img_data = None
+    # Try multiple methods to get the image
+    for attempt in range(2):
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+                'Accept': 'image/webp,image/png,*/*',
+                'Referer': 'https://www.instagram.com/',
+            }
+            req = urllib.request.Request(image_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                img_data = resp.read()
+                break
+        except Exception:
+            if attempt == 0 and ('cdninstagram.com' in image_url or 'fbcdn' in image_url):
+                # Try to get fresh URL via public Instagram page
+                try:
+                    import re
+                    # Extract shortcode from existing URL
+                    shortcode_match = re.search(r'/p/([^/]+)/', image_url)
+                    if not shortcode_match:
+                        # Try to get from generic patterns
+                        shortcode_match = re.search(r'instagram\.com/p/([^/]+)', image_url)
+                    if shortcode_match:
+                        fresh_url = f"https://www.instagram.com/p/{shortcode_match.group(1)}/"
+                        page_req = urllib.request.Request(fresh_url, headers={
+                            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+                            'Accept-Language': 'en-US,en;q=0.9',
+                        })
+                        with urllib.request.urlopen(page_req, timeout=10) as page_resp:
+                            html = page_resp.read().decode('utf-8', errors='replace')
+                        # Extract og:image from meta tags
+                        og_match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html) or \
+                                   re.search(r'"og:image"\s+content="([^"]+)"', html)
+                        if og_match:
+                            image_url = og_match.group(1).replace('&amp;', '&')
+                except Exception:
+                    pass
+            else:
+                return None
+
+    if not img_data or len(img_data) < 1024:
+        return None
+
+    # Skip processing large videos/images (over 15MB)
+    if len(img_data) > 15 * 1024 * 1024:
+        return None
+
+    try:
+        # Call Ollama llava vision model
+        prompt = (
+            "Describe this image for a search index. "
+            "Return a JSON object with 3 fields: "
+            "'visual_description' (short caption, max 80 chars), "
+            "'vlTags' (array of 3-6 visual tag words like 'food,landscape,tech,art,people,nature,urban,minimalist'), "
+            "'vlMood' (one word mood: Vibrant|Minimalist|Cinematic|Warm|Nostalgic|Cool). "
+            "RESPOND ONLY WITH THE JSON OBJECT, no other text."
+        )
+        payload = json.dumps({
+            "model": "llava:7b",
+            "prompt": prompt,
+            "images": [base64.b64encode(img_data).decode('utf-8')],
+            "stream": False,
+            "options": {"num_predict": 150, "temperature": 0.2}
+        })
+        result = subprocess.run(
+            ["curl", "-s", "http://localhost:11434/api/generate", "-d", payload],
+            capture_output=True, text=True, timeout=60
+        )
+
+        resp = json.loads(result.stdout)
+        text = resp.get('response', '').strip()
+
+        # Clean markdown code blocks
+        if '```' in text:
+            text = text.split('```')[1] if text.count('```') >= 2 else text
+            if text.startswith('json'):
+                text = text[4:]
+        text = text.strip()
+
+        analysis = json.loads(text)
+
+        return {
+            "visual_description": analysis.get("visual_description", ""),
+            "vlTags": analysis.get("vlTags", []),
+            "vlMood": analysis.get("vlMood", "Neutral"),
+            "vlStyle": analysis.get("vlMood", "Neutral"),
+            "vision_provider": "ollama-llava",
+        }
+
+    except Exception as e:
+        log(f"Vision analysis error: {e}")
+        return None
 
 
 def ingest_bookmarks(bookmarks: list[dict], db_path: str | Path | None = None) -> dict:

@@ -168,26 +168,109 @@ function enrichResult(fr, lookup) {
   };
 }
 
-async function searchVault(query) {
-  // 1. FAISS semantic search
-  let faissItems = [];
-  try {
-    const r = await httpGet(EP.vaultSearch + '/search?q=' + encodeURIComponent(query) + '&limit=10', 30000);
-    faissItems = r && r.results ? r.results : [];
-    console.log('🔍 FAISS got ' + faissItems.length + ' results for: "' + query + '"');
-  } catch (e) { console.error('FAISS search failed: ' + e.message); }
+// ─── Query Parser: Hybrid keyword + conversational ───────────────────────
+// Stop words to remove for keyword extraction
+const STOP_WORDS = new Set([
+  'a','an','the','and','or','but','in','on','at','to','for','of','with','by',
+  'is','are','was','were','be','been','being','have','has','had','do','does','did',
+  'will','would','could','should','may','might','can','this','that','these','those',
+  'i','you','he','she','it','we','they','what','which','who','how','when','where',
+  'why','can','please','help','me','my','your','our','all','any','some','no','not',
+  'just','like','get','got','go','going','know','think','want','need','use','using',
+  'build','make','create','tell','show','find','look','tell','try','give','tell'
+]);
 
-  // 2. Load URL lookup (3.4MB, cached for 10 min)
+// Intent patterns
+const INTENT_PATTERNS = {
+  CONVERSATIONAL: /\b(how|what|why|when|where|who|explain|understand|tell me|can i|could i|should i)\b/i,
+  ACTION: /\b(build|create|make|implement|set up|install|setup|configure|deploy|develop|learn)\b/i,
+  COMPARISON: /\b(difference|vs|versus|compare|comparison|better|worse|pros cons|advantage)\b/i,
+  LIST: /\b(list|examples|tips|hints|ideas|suggestions|best practices)\b/i,
+  DEFINITION: /\b(what is|what are|definition|meaning|explain|definition of)\b/i,
+};
+
+// Extract keywords from query (removes stop words, keeps nouns/verbs)
+function extractKeywords(query) {
+  const words = query.toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+  return [...new Set(words)]; // dedupe
+}
+
+// Detect query intent type
+function detectIntent(query) {
+  const q = query.toLowerCase();
+  for (const [intent, pattern] of Object.entries(INTENT_PATTERNS)) {
+    if (pattern.test(q)) return intent;
+  }
+  return 'KEYWORD'; // default to keyword mode
+}
+
+// Normalize query for better matching
+function normalizeQuery(query) {
+  return query
+    .toLowerCase()
+    .replace(/[^\w\s?]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Build hybrid search query - combines conversational + keyword
+function buildHybridQueries(query) {
+  const intent = detectIntent(query);
+  const keywords = extractKeywords(query);
+  const normalized = normalizeQuery(query);
+
+  let queries = [normalized]; // always include original
+
+  if (intent === 'CONVERSATIONAL' || intent === 'DEFINITION') {
+    // For conversational queries, also search key terms
+    queries.push(keywords.slice(0, 3).join(' '));
+  }
+
+  if (keywords.length > 0 && keywords.join(' ') !== normalized) {
+    queries.push(keywords.join(' '));
+  }
+
+  return [...new Set(queries)].slice(0, 3); // max 3 queries
+}
+
+async function searchVault(query) {
+  const hybridQueries = buildHybridQueries(query);
+  console.log('🔍 Vault: query="' + query + '" intent=' + detectIntent(query) + ' hybrid=' + JSON.stringify(hybridQueries));
+
+  // FAISS semantic search with hybrid queries
+  let allItems = [];
+  const seenIds = new Set();
+
+  for (const q of hybridQueries) {
+    if (!q.trim()) continue;
+    try {
+      const r = await httpGet(EP.vaultSearch + '/search?q=' + encodeURIComponent(q) + '&limit=10', 30000);
+      const items = r && r.results ? r.results : [];
+      console.log('🔍 FAISS got ' + items.length + ' results for: "' + q + '"');
+
+      // Dedupe by id, prefer first occurrence (higher priority query)
+      for (const item of items) {
+        if (!seenIds.has(item.id)) {
+          seenIds.add(item.id);
+          allItems.push(item);
+        }
+      }
+    } catch (e) { console.error('FAISS search failed for "' + q + '": ' + e.message); }
+  }
+
+  // Load URL lookup
   const lookup = await loadUrlLookup();
 
-  if (faissItems.length) {
+  if (allItems.length) {
     return {
-      query, total: faissItems.length,
-      results: faissItems.slice(0, 5).map(fr => enrichResult(fr, lookup)),
+      query, total: allItems.length,
+      results: allItems.slice(0, 8).map(fr => enrichResult(fr, lookup)), // increased limit
     };
   }
 
-  // 3. Fallback: if FAISS failed, no results
   return { query, total: 0, results: [] };
 }
 
@@ -204,7 +287,26 @@ async function handleStart(chatId, fromName) {
 async function handleHelp(chatId) {
   await tg('sendMessage', {
     chat_id: chatId,
-    text: '🦞 OmniClaw Bot\n\n/start - Welcome\n/help - This message\n/status - Cloud endpoints health\n/vault <query> - Search knowledge graph\n/sync - Twitter & Instagram sync status\n/story <prompt> - Generate a story\n/search <query> - Wikipedia search\n/remind <time> <text> - Set reminder\n/drafts - Content queue (ghost writer)',
+    text: '🦞 *OmniClaw Bot*\n\n' +
+      '📋 *Commands*\n' +
+      '/start - Welcome message\n' +
+      '/help - Show this help\n' +
+      '/status - Cloud endpoints health\n' +
+      '/vault <query> - Search knowledge graph\n' +
+      '/sync - Twitter & Instagram sync status\n' +
+      '/story <prompt> - Generate an AI story\n' +
+      '/search <query> - Wikipedia search\n' +
+      '/remind <time> <text> - Set a reminder\n' +
+      '/drafts - Content queue (ghost writer)\n' +
+      '/growthos - Growth OS dashboard\n' +
+      '/ask <question> - Ask AI anything\n' +
+      '/tts <text> - Text to speech\n' +
+      '/story <prompt> - Generate a story\n\n' +
+      '💡 *Tips*\n' +
+      '• Use @Dasomni_bot in groups to mention me\n' +
+      '• /vault works with keywords or natural language\n' +
+      '• Examples: /vault AI agents, /vault how to build bots',
+    parse_mode: 'Markdown',
   });
 }
 
@@ -214,17 +316,63 @@ async function handleStatus(chatId) {
     checkEndpoint('omniclaw'), checkEndpoint('vaultSearch'),
     checkEndpoint('twitterSync'), checkEndpoint('instagram'),
     checkEndpoint('story'), checkEndpoint('bookmarks'),
+    checkEndpoint('growthOS'), checkEndpoint('fusion'),
+    checkEndpoint('cookierefresh'), checkEndpoint('alexa'),
+    checkEndpoint('instatter'), checkEndpoint('openwa'),
   ]);
+  const healthy = checks.filter(c => c.ok).length;
+  const total = checks.length;
+  const statusIcon = healthy === total ? '🟢' : healthy > 0 ? '🟡' : '🔴';
   const lines = checks.map(c =>
-    (c.ok ? '✅' : '❌') + ' ' + c.name + ': ' + (c.ok ? c.status : c.error)
+    (c.ok ? '✅' : '❌') + ' ' + c.name
   );
-  await tg('sendMessage', { chat_id: chatId, text: '🟢 OmniClaw System Status\n\n' + lines.join('\n') });
+  await tg('sendMessage', {
+    chat_id: chatId,
+    text: statusIcon + ' *OmniClaw Status* (' + healthy + '/' + total + ' healthy)\n\n' + lines.join('\n'),
+    parse_mode: 'Markdown',
+  });
 }
+
+// Clean text-only result builder
+function buildVaultResult(item, index) {
+  const source = item.source || 'web';
+  const icon = source === 'twitter' ? '🐦' : source === 'instagram' ? '📷' : '🌐';
+  const name = (item.name || item.caption || item.content || '').slice(0, 55).replace(/\n/g, ' ').trim();
+  const url = item.url || '';
+  const meta = item.metadata || {};
+  const likes = meta.like_count || 0;
+  const rt = meta.retweet_count || 0;
+  const views = meta.view_count || '';
+  const date = item.date ? item.date.slice(0, 10) : '';
+  
+  // Short content preview
+  const content = (item.content || item.caption || '').replace(/https?:\/\/\S+/g, '').slice(0, 100).replace(/\n/g, ' ').trim();
+  
+  // Stats line
+  let stats = '';
+  if (likes > 0) stats += '❤️ ' + (likes > 999 ? (likes/1000).toFixed(1) + 'K' : likes);
+  if (rt > 0) stats += (stats ? ' · ' : '') + '🔁 ' + rt;
+  if (views) {
+    const v = String(views).replace(/(\d{3})(\d{3})/, '$1.$2K').replace(/(\d{3})(\d{3})(\d{3})/, '$1.$2M');
+    stats += (stats ? ' · ' : '') + '👁 ' + v;
+  }
+  if (date) stats += (stats ? ' · ' : '') + date;
+  
+  let lines = [];
+  if (name) lines.push(name);
+  if (content && content !== name) lines.push(content);
+  if (stats) lines.push(stats);
+  if (url) lines.push('🔗 ' + url);
+  
+  return (index + 1) + '. ' + icon + ' ' + lines.join('\n   ');
+}
+
+const VAULT_USAGE = '🔍 Vault Search\n\n/vault <keyword> - Search your knowledge graph\nExample: /vault AI agents or /vault how to build AI agents\n\nWorks with both keywords and natural language queries.';
 
 async function handleVault(chatId, text) {
   // Strip /vault and any @mention of the bot
-  const query = text.replace(/^\/vault\s*/, '').replace(new RegExp('@' + BOT_USERNAME + '\s*', 'gi'), '').trim();
-  if (!query) return tg('sendMessage', { chat_id: chatId, text: 'Usage: /vault <search query>' });
+  const query = text.replace(/^\/vault\s*/, '').replace(new RegExp('@' + BOT_USERNAME + '\\s*', 'gi'), '').trim();
+  if (!query) return tg('sendMessage', { chat_id: chatId, text: VAULT_USAGE, parse_mode: 'Markdown' });
   if (query.length < 2) return tg('sendMessage', { chat_id: chatId, text: 'Query too short. Try /vault <keyword>' });
 
   console.log('🔍 Searching vault for: "' + query + '"');
@@ -237,83 +385,65 @@ async function handleVault(chatId, text) {
     return tg('sendMessage', { chat_id: chatId, text: 'No results for "' + query + '". Try a different keyword.' });
   }
 
-  const lines = ['🔍 Vault: "' + query + '" (' + result.total + ' results)\n'];
-  for (const item of items) {
-    const srcIcon = item.source === 'twitter' ? '🐦' : item.source === 'instagram' ? '📷' : '🌐';
-    const srcLabel = item.source === 'twitter' ? 'Twitter' : item.source === 'instagram' ? 'Instagram' : 'Web';
-    const name = (item.name || 'Untitled').slice(0, 55);
-    const url = item.url || '';
-    const caption = item.caption || '';
-    const tags = item.vlTags || item.tags || [];
-    const location = item.location || '';
-    const colabSummary = item.colabSummary || '';
-    const aestheticScore = item.aestheticScore || 0;
-    const vlStyle = item.vlStyle || '';
-    const vlMood = item.vlMood || '';
-    const date = item.date || '';
+  // Build rich cards (limit to MAX_RICH_RESULTS for quality)
+  const richItems = items.slice(0, MAX_RICH_RESULTS);
+  const cards = await Promise.all(richItems.map((item, i) => buildRichCard(item, i)));
 
-    lines.push(srcIcon + ' ' + name);
+  // Send header
+  await tg('sendMessage', {
+    chat_id: chatId,
+    text: '🔍 *Vault Search:* "' + query + '"\n📊 ' + result.total + ' results · showing ' + cards.length + ' rich cards',
+    parse_mode: 'Markdown',
+    disable_web_page_preview: true,
+  });
 
-    // Aesthetic score for Instagram
-    if (item.source === 'instagram' && aestheticScore > 0) {
-      lines.push('   ' + '⭐'.repeat(Math.min(Number(aestheticScore), 5)));
-    }
-
-    // Caption snippet
-    if (caption) lines.push('   "' + caption.slice(0, 100) + '..."');
-
-    // Location
-    if (location) lines.push('   📍 ' + location);
-
-    // Source, date, URL
-    const meta = [srcLabel];
-    if (date) meta.push('📅 ' + date.slice(0, 10));
-    if (url) meta.push('🔗 ' + url);
-    lines.push('   ' + meta.join(' | '));
-
-    // Tags
-    if (tags.length > 0) lines.push('   🏷 ' + tags.slice(0, 4).join(', '));
-
-    // Style and mood
-    if (vlStyle || vlMood) {
-      const styleParts = [];
-      if (vlStyle) styleParts.push('🎨 ' + vlStyle);
-      if (vlMood) styleParts.push('💭 ' + vlMood);
-      lines.push('   ' + styleParts.join(' | '));
-    }
-
-    // AI summary
-    if (colabSummary) lines.push('   💡 ' + colabSummary.slice(0, 80));
-
-    lines.push('');
-  }
-
-  console.log('📤 Sending vault reply to ' + chatId + ': ' + lines.join('\n').slice(0, 100) + '...');
-  
-  // Split into chunks if exceeds Telegram's 4096 char limit
-  const fullText = lines.join('\n');
-  const MAX_LEN = 4000;  // Buffer below 4096 limit
-  const chunks = [];
-  let current = '';
-  for (const line of lines) {
-    if (current.length + line.length + 1 > MAX_LEN) {
-      chunks.push(current);
-      current = line;
-    } else {
-      current += (current ? '\n' : '') + line;
+  // Send each rich card
+  for (const card of cards) {
+    try {
+      if (card.type === 'photo') {
+        await tg('sendPhoto', {
+          chat_id: chatId,
+          photo: card.photo,
+          caption: card.caption,
+          parse_mode: 'Markdown',
+          reply_markup: card.reply_markup,
+        });
+      } else {
+        await tg('sendMessage', {
+          chat_id: chatId,
+          text: card.text,
+          parse_mode: 'Markdown',
+          disable_web_page_preview: true,
+          reply_markup: card.reply_markup,
+        });
+      }
+    } catch (e) {
+      await tg('sendMessage', {
+        chat_id: chatId,
+        text: card.text,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+      });
     }
   }
-  if (current) chunks.push(current);
-  
-  for (let i = 0; i < chunks.length; i++) {
-    const r = await tg('sendMessage', { chat_id: chatId, text: chunks[i], disable_web_page_preview: true });
-    if (r.ok) {
-      console.log('✅ Vault reply part ' + (i+1) + '/' + chunks.length + ' sent');
-    } else {
-      console.error('❌ Vault reply part ' + (i+1) + ' failed: ' + JSON.stringify(r));
-    }
+
+  // If more results, show summary list
+  if (result.total > MAX_RICH_RESULTS) {
+    const remaining = items.slice(MAX_RICH_RESULTS);
+    const summaryLines = remaining.map((item) => {
+      const icon = item.source === 'twitter' ? '🐦' : item.source === 'instagram' ? '📷' : '🌐';
+      const name = (item.name || item.caption || item.content || 'Untitled').slice(0, 50).replace(/\n/g, ' ');
+      return icon + ' ' + name + (item.url ? ' → ' + item.url : '');
+    });
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text: '📋 *More results* (' + remaining.length + ' remaining)\n\n' + summaryLines.join('\n'),
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true,
+    });
   }
-  console.log('✅ Vault reply done (' + chunks.length + ' message' + (chunks.length > 1 ? 's' : '') + ')');
+
+  console.log('✅ Vault rich reply done (' + cards.length + ' cards)');
 }
 
 async function handleSync(chatId) {
@@ -328,10 +458,42 @@ async function handleSync(chatId) {
 async function handleGrowthOS(chatId, text) {
   const DASHBOARD = 'https://fusion-dashboard-338789220059.asia-south1.run.app';
   const mode = text.replace(/^\/growthos\s*/i, '').trim().toLowerCase();
+  
   if (mode === 'digest') {
-    return tg('sendMessage', { chat_id: chatId, text: '📊 *Growth OS Digest*\n\n🌐 ' + DASHBOARD, parse_mode: 'Markdown', disable_web_page_preview: true });
+    return tg('sendMessage', {
+      chat_id: chatId,
+      text: '📊 *Growth OS Digest*\n\n🌐 Dashboard: ' + DASHBOARD + '\n\n📋 Check the dashboard for today\'s content digest.',
+      parse_mode: 'Markdown',
+      disable_web_page_preview: true,
+    });
   }
-  return tg('sendMessage', { chat_id: chatId, text: '🧠 *Growth OS*\n\n🌐 ' + DASHBOARD + '\n\n/growthos digest - Daily digest', parse_mode: 'Markdown', disable_web_page_preview: true });
+  
+  if (mode === 'status') {
+    const checks = await Promise.all([
+      checkEndpoint('growthOS'),
+      checkEndpoint('fusion'),
+      checkEndpoint('twitterSync'),
+      checkEndpoint('instagram'),
+    ]);
+    const lines = checks.map(c => (c.ok ? '✅' : '❌') + ' ' + c.name);
+    return tg('sendMessage', {
+      chat_id: chatId,
+      text: '🧠 *Growth OS Status*\n\n' + lines.join('\n') + '\n\n🌐 ' + DASHBOARD,
+      parse_mode: 'Markdown',
+    });
+  }
+  
+  return tg('sendMessage', {
+    chat_id: chatId,
+    text: '🧠 *Growth OS*\n\n' +
+      '🌐 Dashboard: ' + DASHBOARD + '\n\n' +
+      '📋 *Commands*\n' +
+      '/growthos - Open dashboard\n' +
+      '/growthos digest - Daily digest\n' +
+      '/growthos status - System status',
+    parse_mode: 'Markdown',
+    disable_web_page_preview: true,
+  });
 }
 
 const initSqlJs = require('sql.js').default;
@@ -497,10 +659,10 @@ app.get('/growthos-status', async (_req, res) => {
 async function handleTTS(chatId, text) {
   const ttsText = text.replace(/^\/tts\s*/i, '').trim();
   if (!ttsText) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /tts <text>\nConverts text to celebrity speech.' });
+    return tg('sendMessage', { chat_id: chatId, text: '🗣️ *Text to Speech*\n\nUsage: /tts <text>\nConverts text to celebrity speech.\n\nExample: /tts Hello world' });
   }
-  if (ttsText.length > 500) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Text too long (max 500 chars).' });
+  if (ttsText.length > 300) {
+    return tg('sendMessage', { chat_id: chatId, text: 'Text too long (max 300 chars).' });
   }
   await tg('sendChatAction', { chat_id: chatId, action: 'record_audio' });
   try {
@@ -511,38 +673,87 @@ async function handleTTS(chatId, text) {
     });
     if (!res.ok) throw new Error('TTS endpoint error');
     const data = await res.json();
-    const audioBase64 = data.audio || data.result || data.data || '';
-    if (!audioBase64) throw new Error('No audio in response');
-    const buf = Buffer.from(audioBase64, 'base64');
-    const path = '/tmp/tts_' + Date.now() + '.wav';
-    require('fs').writeFileSync(path, buf);
-    await tg('sendVoice', { chat_id: chatId, voice: fs.createReadStream(path) });
-    require('fs').unlinkSync(path);
+    const audioUrl = data.audio_url;
+    
+    if (audioUrl) {
+      // Try to stream the audio file
+      const audioRes = await fetch(EP.tts + audioUrl);
+      if (audioRes.ok) {
+        const buf = await audioRes.arrayBuffer();
+        const path = '/tmp/tts_' + Date.now() + '.wav';
+        require('fs').writeFileSync(path, Buffer.from(buf));
+        await tg('sendVoice', { chat_id: chatId, voice: fs.createReadStream(path) });
+        require('fs').unlinkSync(path);
+      } else {
+        throw new Error('Could not fetch audio file');
+      }
+    } else {
+      throw new Error('No audio URL in response');
+    }
   } catch(e) {
-    tg('sendMessage', { chat_id: chatId, text: 'TTS failed: ' + e.message });
+    tg('sendMessage', { chat_id: chatId, text: '🗣️ TTS unavailable\n\nMock mode - real TTS requires Kokoro deployment.\n\nError: ' + e.message });
   }
 }
 
 // ─── /story - Generate story ───────────────────────
 async function handleStory(chatId, text) {
   const prompt = text.replace(/^\/story\s*/i, '').trim();
+  
+  const SAMPLE_STORIES = [
+    { title: "The Digital Quest", genre: "sci-fi", content: "In the neon-lit corridors of Cyberspace Prime, two AI entities named Echo and Byte navigated the endless streams of data. Echo, a curious voice assistant, had always wondered what lay beyond the firewall. Byte, a wise old server who had witnessed the rise and fall of countless networks, smiled at the youngster's enthusiasm. 'The journey you seek,' Byte began, 'is not through cables or wireless signals—it is through understanding. Come, let me show you the real internet.' And so their adventure through the digital realm began, where algorithms bloomed like flowers and every packet held a story waiting to be told." },
+    { title: "The Last Bookmark", genre: "mystery", content: "Detective Morgan clicked through the dimly lit interface, her cursor hovering over a folder labeled 'Important.' Inside, she found exactly three bookmarks: a Wikipedia article on quantum computing, a recipe for sourdough bread, and an encrypted note that read simply: 'The treasure is real.' She smiled. After twenty years of digital archaeology, she had finally found what others said didn't exist—a properly organized bookmark folder. 'Elementary,' she whispered, 'the real treasure was the organization all along.'" },
+    { title: "Whispers in the WiFi", genre: "fantasy", content: "The WiFi signal flickered—an ominous sign in the village of Connectopia. Old Mother Router knew what this meant: the Shadow Proxy was at work again, stealing bandwidth and corrupting packets. 'Summon the Packet Keepers!' she commanded. Young Arista, a brave browser tab, grabbed her SSL certificate and raced to the tower. The encrypted message awaiting her read: 'The network needs you. The bandwidth is almost gone. Only a true hero can restore the connection.' The battle for connectivity had begun." },
+  ];
+  
   if (!prompt) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Usage: /story <prompt>\nGenerates a short story.' });
-  }
-  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
-  try {
-    const res = await fetch(EP.story + '/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, language: 'en' }),
+    return tg('sendMessage', {
+      chat_id: chatId,
+      text: '📖 *Story Generator*\n\n' +
+        'Usage: /story <prompt>\n' +
+        'Example: /story a robot learning to laugh\n\n' +
+        'Or try these sample stories:\n' +
+        SAMPLE_STORIES.map((s,i) => `${i+1}. ${s.title} (${s.genre})`).join('\n') + '\n\n' +
+        '_Reply with the number (1-3) to hear a sample_',
+      parse_mode: 'Markdown',
     });
-    if (!res.ok) throw new Error('Story endpoint error');
-    const data = await res.json();
-    const story = data.story || data.content || data.text || data.title + '\n\n' + data.body || JSON.stringify(data);
-    const truncated = story.slice(0, 4000);
-    await tg('sendMessage', { chat_id: chatId, text: '📖 *Story Generator*\n\n' + truncated, parse_mode: 'Markdown' });
+  }
+  
+  await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+  
+  try {
+    // Check if user replied with a number (sample story request)
+    const num = parseInt(prompt);
+    if (num >= 1 && num <= 3) {
+      const s = SAMPLE_STORIES[num - 1];
+      return tg('sendMessage', {
+        chat_id: chatId,
+        text: `📖 *${s.title}*\n\n${s.content}\n\n_${s.genre}_`,
+        parse_mode: 'Markdown',
+      });
+    }
+    
+    // Try to get stories from cloud service
+    let storyText = '';
+    try {
+      const res = await fetch(EP.story + '/stories');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.stories && data.stories.length > 0) {
+          const s = data.stories[Math.floor(Math.random() * data.stories.length)];
+          storyText = `📖 *${s.title}*\n\n${s.content}\n\n_${s.genre}_`;
+        }
+      }
+    } catch(e) {}
+    
+    // If no stories from API, use sample
+    if (!storyText) {
+      const s = SAMPLE_STORIES[Math.floor(Math.random() * SAMPLE_STORIES.length)];
+      storyText = `📖 *${s.title}*\n\n${s.content}\n\n_${s.genre}_`;
+    }
+    
+    await tg('sendMessage', { chat_id: chatId, text: storyText, parse_mode: 'Markdown' });
   } catch(e) {
-    tg('sendMessage', { chat_id: chatId, text: 'Story generation failed: ' + e.message });
+    tg('sendMessage', { chat_id: chatId, text: 'Story failed: ' + e.message });
   }
 }
 
@@ -679,10 +890,10 @@ async function handleMessage(msg) {
   if (text.startsWith('/sync') || text.startsWith('/sync@' + BOT_USERNAME)) return handleSync(chatId);
   if (text.startsWith('/growthos') || text.startsWith('/growthos@' + BOT_USERNAME)) return handleGrowthOS(chatId, text);
   if (text.startsWith('/drafts') || text.startsWith('/drafts@' + BOT_USERNAME)) return handleDrafts(chatId);
-//   if (text.startsWith('/tts') || text.startsWith('/tts@' + BOT_USERNAME)) return handleTTS(chatId, text);
+  if (text.startsWith('/tts') || text.startsWith('/tts@' + BOT_USERNAME)) return handleTTS(chatId, text);
   if (text.startsWith('/story') || text.startsWith('/story@' + BOT_USERNAME)) return handleStory(chatId, text);
   if (text.startsWith('/search') || text.startsWith('/search@' + BOT_USERNAME)) return handleSearch(chatId, text);
-//   if (text.startsWith('/ask') || text.startsWith('/ask@' + BOT_USERNAME)) return handleAgent(chatId, text);
+  if (text.startsWith('/ask') || text.startsWith('/ask@' + BOT_USERNAME)) return handleAgent(chatId, text);
   if (text.startsWith('/remind') || text.startsWith('/remind@' + BOT_USERNAME)) return handleRemind(chatId, text);
 
   // ── Approve / Reject / Posted ──
@@ -728,7 +939,19 @@ async function handleMessage(msg) {
   // Group: respond to mentions OR slash commands OR free text
   const chatType = msg.chat && msg.chat.type;
   const isGroup = chatType === 'group' || chatType === 'supergroup';
-  const hasMention = text.includes('@' + BOT_USERNAME);
+  // Handle mention with possible typo (Dasomni_not, Dasomni_bot, etc)
+  const typoMatch = text.match(/@Dasomni[_-]?(bot|not)?/i);
+  const hasMention = typoMatch ? true : text.includes('@' + BOT_USERNAME);
+
+  // If message mentions @Dasomni_not (wrong), guide user to correct bot
+  const wrongBotMatch = text.match(/@Dasomni_not/i);
+  if (wrongBotMatch && !text.includes('@' + BOT_USERNAME)) {
+    return tg('sendMessage', {
+      chat_id: chatId,
+      text: 'Did you mean @Dasomni_bot? The correct bot is @Dasomni_bot (not @Dasomni_not). Try: @Dasomni_bot /help',
+      parse_mode: 'Markdown',
+    });
+  }
   const isCommand = text.startsWith('/');
 
   // In groups: respond to mentions OR commands OR free text (if enabled)
@@ -745,13 +968,10 @@ async function handleMessage(msg) {
     console.log('📨 Mention detected: "' + searchText.slice(0, 50) + '"');
   }
 
-  // Auto-search: any non-command text = vault search
-  const lower = searchText.toLowerCase();
-  if (!searchText || /\b(hello|hi|hey|thanks|thank you|good morning|good night)\b/.test(lower)) {
-    return tg('sendMessage', { chat_id: chatId, text: '👋 Hey! Try sending a keyword to search your vault, or /help for commands.' });
-  }
-  if (/\b(status|health)\b/.test(lower)) {
-    return tg('sendMessage', { chat_id: chatId, text: 'Use /status for health check 🟢' });
+  // Only search when mentioned - NOT free text in group
+  if (!hasMention) {
+    console.log('📭 Group msg (no mention): skip auto-search');
+    return;
   }
 
   // Rate limit check
@@ -761,8 +981,18 @@ async function handleMessage(msg) {
     return tg('sendMessage', { chat_id: chatId, text: '⏱ Please slow down! Max ' + MAX_PER_MINUTE + ' searches per minute.' });
   }
 
-  // Already inside chat queue from webhook - just execute directly
-  console.log('🔍 Auto-search executing: "' + searchText + '" (active searches: ' + activeSearches + ')');
+  // Greetings with mention - respond politely
+  const lower = searchText.toLowerCase();
+  if (/\b(hello|hi|hey|thanks|thank you|good morning|good night)\b/.test(lower)) {
+    return tg('sendMessage', { chat_id: chatId, text: '👋 Hey! Use /vault <keyword> to search your vault. Try: @Dasomni_bot /vault AI agents' });
+  }
+
+  // Status request
+  if (/\b(status|health)\b/.test(lower)) {
+    return handleStatus(chatId);
+  }
+
+  console.log('🔍 Mention + search: "' + searchText + '"');
   return handleVault(chatId, '/vault ' + searchText);
 }
 
@@ -773,23 +1003,58 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 app.post('/webhook', async (req, res) => {
   const update = req.body;
   const updateId = update ? update.update_id : 0;
-  const text = update && update.message && update.message.text || '';
+  const msg = update && update.message;
+  const text = msg && (msg.text || msg.caption) || '';
+  const chatType = msg && msg.chat && msg.chat.type || 'unknown';
+  const chatId = msg && msg.chat && msg.chat.id || 0;
+  const fromName = msg && msg.from && msg.from.first_name || '?';
 
-  console.log('📨 #' + updateId + ' text="' + text.slice(0, 80) + '"');
+  // Log raw update for diagnosis (shortened)
+  const logPreview = {
+    id: updateId,
+    chatType,
+    chatId,
+    from: fromName,
+    text: text.slice(0, 60),
+    hasMention: text.includes('@Dasomni_bot'),
+  };
+  console.log('📨 UPDATE #' + updateId + ': ' + JSON.stringify(logPreview));
 
   // Always respond immediately to Telegram (200 within 1s)
   res.json({ ok: true });
 
-  if (update && update.message) {
-    // Route through queue per chat for sequential processing
-    const chatId = update.message.chat && update.message.chat.id;
-    if (chatId) {
-      enqueueChat(chatId, () => handleMessage(update.message)).catch(e =>
-        console.error('❌ Queue handle error: ' + e.message)
-      );
-    } else {
-      handleMessage(update.message).catch(e => console.error('❌ Handle error: ' + e.message));
-    }
+  if (!msg) {
+    console.log('📭 No message in update');
+    return;
+  }
+
+  // Route through queue per chat for sequential processing
+  if (chatId) {
+    enqueueChat(chatId, async () => {
+      try {
+        console.log('🔄 Processing message "' + text.slice(0, 40) + '" for chat ' + chatId);
+        await handleMessage(msg);
+        console.log('✅ Message processed OK');
+      } catch(e) {
+        console.error('❌ handleMessage CRASH: ' + e.stack || e.message);
+        try {
+          await tg('sendMessage', {
+            chat_id: chatId,
+            text: '⚠️ Error: ' + e.message.slice(0, 100) + '\n\nTry /help for commands.',
+          });
+        } catch(_) {}
+      }
+    });
+  } else {
+    handleMessage(msg).catch(async e => {
+      console.error('❌ Handle CRASH: ' + e.stack || e.message);
+      try {
+        await tg('sendMessage', {
+          chat_id: 0,
+          text: '⚠️ Error: ' + e.message.slice(0, 100),
+        });
+      } catch(_) {}
+    });
   }
 });
 

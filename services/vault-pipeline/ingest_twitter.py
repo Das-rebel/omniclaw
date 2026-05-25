@@ -37,19 +37,17 @@ def _parse_gcs_uri(uri: str) -> tuple[str, str]:
 
 
 def read_from_gcs() -> list[dict]:
-    """Read twitter JSON from GCS via gsutil."""
-    import subprocess
-    bucket, path = _parse_gcs_uri(f"{GCS_BUCKET}/{GCS_TWITTER_PATH}")
+    """Read twitter JSON from GCS via google-cloud-storage library."""
     try:
-        result = subprocess.run(
-            ["gsutil", "cat", f"gs://{bucket}/{path}"],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            if isinstance(data, list):
-                log(f"Read {len(data)} items from GCS")
-                return data
+        from google.cloud import storage
+        bucket_name = GCS_BUCKET.replace("gs://", "")
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(GCS_TWITTER_PATH)
+        data = json.loads(blob.download_as_text())
+        if isinstance(data, list):
+            log(f"Read {len(data)} items from GCS")
+            return data
     except Exception as e:
         log(f"GCS read failed: {e}")
     return []
