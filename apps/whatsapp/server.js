@@ -17,6 +17,7 @@ const API_TOKEN = process.env.GREENAPI_TOKEN || 'f9e7484d874043239fc97bbe3cfcef2
 const PORT = process.env.PORT || 8090;
 const BOT_PHONE = process.env.BOT_PHONE || '919003349852';
 const WA_API_KEY = process.env.WA_API_KEY || 'omniclaw-wa-secret';
+const ADMIN_PHONES = ['919003349852'];
 
 // ─── GreenAPI Wrapper ────────────────────────────────
 const GreenAPI = require('./greenapi-wrapper');
@@ -24,6 +25,10 @@ const api = new GreenAPI(INSTANCE_ID, API_TOKEN);
 
 // ─── Rate Limiting & Queue Management ─────────────────
 const { checkRate, enqueue, MAX_PER_MINUTE } = require('./rate-limiter');
+
+// ─── Free-text vault auto-search rate limiter ─────────
+const freeTextCount = new Map(); // phone → [{time}]
+const FREE_TEXT_LIMIT = 3; // max auto-searches per 60 seconds
 
 // ─── GreenAPI Send Helpers ────────────────────────────
 function normalizeChatId(phone) {
@@ -53,6 +58,9 @@ const EP = {
   story: 'https://story-narrator-338789220059.asia-south1.run.app',
   alexa: 'https://alexa-handler-338789220059.asia-south1.run.app',
   dashboard: 'https://fusion-dashboard-338789220059.asia-south1.run.app',
+  vaultPipeline: 'https://vault-pipeline-338789220059.asia-south1.run.app',
+  vaultControl: 'https://omniclaw-vault-control-338789220059.asia-south1.run.app',
+  instatter: 'https://instatter-338789220059.asia-south1.run.app',
 };
 
 async function httpGet(url, timeout = 30000) {
@@ -79,7 +87,7 @@ async function checkEndpoint(name) {
 }
 
 // ─── Vault Search — imported from vault-search.js ─────
-const { searchVault, buildVaultResult, extractKeywords } = require('./vault-search');
+const { searchVault, buildVaultResult, extractKeywords, getVaultUrls } = require('./vault-search');
 
 // ─── Reminders (persistent JSON file) ────────────────
 const REMINDERS_FILE = '/tmp/omniclaw_wa_reminders.json';
@@ -122,7 +130,13 @@ const GCS_DB_URL = 'https://storage.googleapis.com/growth-os-db-338789220059/gro
 async function loadSqliteFromGCS() {
   if (gcsDb && Date.now() - gcsDbLoaded < 300000) return gcsDb;
   try {
-    const initSqlJs = require('sql.js');
+    let initSqlJs;
+    try {
+      initSqlJs = require('sql.js');
+    } catch(e) {
+      console.error('❌ sql.js not available:', e.message);
+      return null;
+    }
     const dbRes = await fetch(GCS_DB_URL + '?cachebust=' + Date.now());
     if (!dbRes.ok) throw new Error('GCS DB fetch failed: ' + dbRes.status);
     const dbBuf = await dbRes.arrayBuffer();
@@ -131,7 +145,7 @@ async function loadSqliteFromGCS() {
     gcsDbLoaded = Date.now();
     return gcsDb;
   } catch (e) {
-    console.error('❌ GCS SQLite load failed: ' + e.message);
+    console.error('❌ GCS SQLite load failed:', e.message);
     gcsDb = null;
     return null;
   }
@@ -201,11 +215,15 @@ async function handleStatus(phone) {
     checkEndpoint('story'), checkEndpoint('bookmarks'),
     checkEndpoint('tts'), checkEndpoint('alexa'),
     checkEndpoint('dashboard'),
+    checkEndpoint('vaultPipeline'),
+    checkEndpoint('vaultControl'),
+    checkEndpoint('instatter'),
   ]);
   const healthy = checks.filter(c => c.ok).length;
   const total = checks.length;
-  const lines = checks.map(c => (c.ok ? '✅' : '❌') + ' ' + c.name);
-  await waSend(phone, '🟢 *OmniClaw Status* (' + healthy + '/' + total + ' healthy)\n\n' + lines.join('\n'));
+  const statusIcon = healthy === total ? '🟢' : healthy > 0 ? '🟡' : '🔴';
+  const lines = checks.map(c => (c.ok ? '✅' : '❌') + ' ' + c.name.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()));
+  await waSend(phone, statusIcon + ' *OmniClaw Status* (' + healthy + '/' + total + ' healthy)\n\n' + lines.join('\n'));
 }
 
 async function handleSync(phone) {
@@ -282,6 +300,17 @@ async function handleVault(phone, text) {
     } catch (e) {
       console.error('❌ Vault batch error: ' + e.message);
       await waSend(phone, '⚠️ Error formatting results: ' + e.message.slice(0, 50));
+    }
+  }
+
+  // Send URLs for link previews (WhatsApp auto-generates rich preview cards)
+  const urls = getVaultUrls(items);
+  for (const url of urls.slice(0, 3)) {
+    try {
+      await waSend(phone, '🔗 ' + url);
+      await new Promise(r => setTimeout(r, 500));
+    } catch (e) {
+      console.error('URL preview send failed: ' + e.message);
     }
   }
 
@@ -418,7 +447,10 @@ async function handleDrafts(phone) {
   let drafts = [];
   try { drafts = await getDraftsFromGCS(10); }
   catch (e) {
-    return waSend(phone, '📝 *Content Queue*\n\n⚠️ Could not load drafts.\n\nDashboard: ' + EP.dashboard);
+    return waSend(phone, '📝 *Content Queue*\n\n⚠️ Could not load drafts (database unavailable).\nCheck the GrowthOS dashboard for drafts:\n🌐 ' + EP.dashboard);
+  }
+  if (!drafts || !drafts.length) {
+    return waSend(phone, '📝 *Content Queue*\n\n📭 No drafts found in the database.\n\nCheck the dashboard to create new drafts:\n🌐 ' + EP.dashboard);
   }
 
   const lines = ['📝 *Content Queue* (' + drafts.length + ' drafts)\n'];
@@ -510,6 +542,17 @@ async function handleIncomingMessage(senderPhone, senderName, messageText, chatI
 
   if (!checkRate(phone)) return waSend(phone, '⏱ Please slow down! Max ' + MAX_PER_MINUTE + ' requests per minute.');
 
+  // ─── Group admin check - block sensitive commands for non-admins in groups
+  const isGroup = phone && phone.includes('@g.us');
+  const blockedCommands = ['/drafts', '/growthos', '/remind', '/story', '/tts'];
+  if (isGroup && !ADMIN_PHONES.includes(senderPhone)) {
+    for (const cmd of blockedCommands) {
+      if (text.startsWith(cmd)) {
+        return waSend(phone, '⛔ Only the bot admin can use this in groups.');
+      }
+    }
+  }
+
   // ─── Commands ──
   if (text === '/start') return handleStart(phone, fromName);
   if (text === '/help') return handleHelp(phone);
@@ -557,7 +600,18 @@ async function handleIncomingMessage(senderPhone, senderName, messageText, chatI
   }
   if (/\b(status|health)\b/.test(lower)) return handleStatus(phone);
 
-  await waSend(phone, agentFallback(text));
+  // ─── Auto vault search for any free text ──
+  const now = Date.now();
+  const userFreeText = freeTextCount.get(phone) || [];
+  const recentFreeText = userFreeText.filter(t => now - t < 60000);
+  if (recentFreeText.length >= FREE_TEXT_LIMIT) {
+    return waSend(phone, '⏱ Please slow down! Use /vault <keyword> directly for faster results. (' + FREE_TEXT_LIMIT + ' free-text searches/min max)');
+  }
+  recentFreeText.push(now);
+  freeTextCount.set(phone, recentFreeText);
+
+  await waSend(phone, '🔍 Searching vault for: "' + text + '"...');
+  await handleVault(phone, '/vault ' + text);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -633,6 +687,16 @@ setInterval(() => {
     }
   } catch(e) { console.error('❌ Reminder interval error:', e.message); }
 }, 30000);
+
+// ─── Free-text rate limiter cleanup ────────────────────
+setInterval(() => {
+  const cutoff = Date.now() - 60000;
+  for (const [phone, times] of freeTextCount.entries()) {
+    const recent = times.filter(t => t > cutoff);
+    if (recent.length === 0) freeTextCount.delete(phone);
+    else freeTextCount.set(phone, recent);
+  }
+}, 120000);
 
 // ═══════════════════════════════════════════════════════
 //  START

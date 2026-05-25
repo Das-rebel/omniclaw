@@ -95,6 +95,12 @@ function buildHybridQueries(query) {
   return [...new Set(queries)].slice(0, 3);
 }
 
+// ─── URL Extraction ──────────────────────────────────────
+
+function getVaultUrls(items) {
+  return items.slice(0, 10).map(i => i.url).filter(Boolean);
+}
+
 // ─── URL Enrichment ─────────────────────────────────────
 
 function enrichResult(fr, lookup) {
@@ -237,4 +243,4 @@ function buildVaultResult(item, index) {
   return (index + 1) + '. ' + icon + ' ' + lines.join('\n   ');
 }
 
-module.exports = { searchVault, buildVaultResult, extractKeywords };
+module.exports = { searchVault, buildVaultResult, extractKeywords, getVaultUrls };
