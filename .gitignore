@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-
 # Environment and secrets
 .env
 .env.*
@@ -10,11 +9,9 @@ whatsapp_auth_session/
 whatsapp_session.json
 bookmark_data/
 knowledge_graph_data/
-
 # Logs
 *.log
 npm-debug.log*
-
 # OS files
 .DS_Store
 .DS_Store?
@@ -23,25 +20,29 @@ npm-debug.log*
 .Trashes
 ehthumbs.db
 Thumbs.db
-
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-
 # Build outputs
 dist/
 build/
 *.pyc
 __pycache__/
-
 # Test coverage
 coverage/
 .nyc_output/
-
 # Temporary files
 *.tmp
 *.temp
 .tmp/
 tmp/
+
+# managed by open-wa
+**.data.json
+**.node-persist**
+**_IGNORE_**
+# end managed by open-wa
+learning_base/vault.db
+services/vault-pipeline/vault.db
