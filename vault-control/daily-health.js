@@ -178,39 +178,33 @@ const fs = require('fs');
 const path = require('path');
 
 function queueWhatsAppMessage(jid, message) {
-  // Try OpenWA REST API first (replaces baileys outbox)
-  const openwaUrl = process.env.OPENWA_URL || 'http://localhost:2785';
-  const openwaKey = process.env.OPENWA_KEY || 'dev-admin-key';
+  // Try GreenAPI first (OpenWA deprecated since 2026-05-27)
+  const greenInstance = process.env.GREENAPI_INSTANCE || '7107630227';
+  const greenToken = process.env.GREENAPI_TOKEN || 'f9e7484d874043239fc97bbe3cfcef23660f6dc83a504591ae';
+  const greenUrl = `https://${greenInstance.slice(0, 4)}.api.greenapi.com`;
 
   try {
-    // Auto-detect active session ID
-    const sessionsList = execSync(
-      `curl -sf "${openwaUrl}/api/sessions" -H "X-API-Key: ${openwaKey}"`,
-      { encoding: 'utf-8', timeout: 5000 }
-    );
-    const sessions = JSON.parse(sessionsList);
-    const active = sessions.find(s => s.status === 'ready');
-    if (!active) throw new Error('No active session');
-
-    // Write payload to temp file to avoid shell quoting issues
-    const tmpFile = `/tmp/openwa-payload-${Date.now()}.json`;
-    const payload = JSON.stringify({ chatId: jid, text: message });
+    const { execSync } = require('child_process');
+    const payload = JSON.stringify({ chatId: jid, message });
+    const tmpFile = `/tmp/greenapi-payload-${Date.now()}.json`;
     fs.writeFileSync(tmpFile, payload);
 
-    execSync(
-      `curl -sf -X POST "${openwaUrl}/api/sessions/${active.id}/messages/send-text" ` +
-      `-H "Content-Type: application/json" -H "X-API-Key: ${openwaKey}" ` +
-      `-d @${tmpFile}`,
+    const output = execSync(
+      `curl -sf -X POST "${greenUrl}/waInstance${greenInstance}/sendMessage/${greenToken}" ` +
+      `-H "Content-Type: application/json" -d @${tmpFile}`,
       { encoding: 'utf-8', timeout: 15000 }
     );
 
-    // Cleanup temp file
     try { fs.unlinkSync(tmpFile); } catch {}
 
-    console.log(`[WA] Sent via OpenWA to ${jid}`);
-    return true;
+    const resp = JSON.parse(output);
+    if (resp.idMessage) {
+      console.log(`[WA] Sent via GreenAPI to ${jid}`);
+      return true;
+    }
+    throw new Error(resp.error?.message || 'unknown GreenAPI error');
   } catch (e) {
-    console.log(`[WA] OpenWA failed, falling back to outbox: ${e.message}`);
+    console.log(`[WA] GreenAPI failed, falling back to outbox: ${e.message}`);
     // Fallback to outbox
     const timestamp = Date.now();
     const msgFile = path.join(CONFIG.WA_OUTBOX, `health-${timestamp}.msg`);

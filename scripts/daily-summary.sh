@@ -265,15 +265,11 @@ echo "[$(date)] Target: ${TARGET_JID}"
 # Verify the bot is running
 if pgrep -f "omniclaw_direct_whatsapp" > /dev/null 2>&1; then
   echo "[$(date)] Bot is running - message will be picked up from outbox"
+elif [ -f /Users/Subho/omniclaw/apps/whatsapp/whatsapp-greenapi.js ]; then
+  echo "[$(date)] Bots not running - sending via GreenAPI..."
+  node /Users/Subho/omniclaw/apps/whatsapp/whatsapp-greenapi.js send "${TARGET_JID}" "${REPORT}" && echo "[$(date)] Sent via GreenAPI" || echo "[$(date)] GreenAPI failed - message stays in outbox"
 else
-  echo "[$(date)] WARNING: Bot not running! Message queued in outbox for when it starts."
-  echo "[$(date)] Fallback: sending via OpenWA REST API..."
-  # Try OpenWA REST API (replaces old baileys one-shot)
-  if /Users/Subho/omniclaw/scripts/openwa-send.sh "${TARGET_JID}" "${REPORT}" 2>&1; then
-    echo "[$(date)] Sent via OpenWA"
-  else
-    echo "[$(date)] OpenWA fallback also failed - message stays in outbox"
-  fi
+  echo "[$(date)] WARNING: Bot not running, GreenAPI CLI not found - message stays in outbox"
 fi
 
 # Clean up old sent files (older than 7 days)
