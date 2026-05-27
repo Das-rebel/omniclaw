@@ -12,4 +12,4 @@ COPY serve_vault_search.py service.py ./
 ENV PORT=8080
 
 # gunicorn handles the PORT env var correctly
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--timeout", "120", "service:application"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "180", "service:application"]

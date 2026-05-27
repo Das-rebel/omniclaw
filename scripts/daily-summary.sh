@@ -150,9 +150,9 @@ TWITTER_INFO=$(gcs_info "${GCS_BUCKET}/vault/twitter_bookmarks_automated.json")
 TWITTER_AGE=$(format_age "$(extract_date "$TWITTER_INFO")")
 TWITTER_COUNT=$(gcs_count "${GCS_BUCKET}/vault/twitter_bookmarks_automated.json")
 
-INSTAGRAM_INFO=$(gcs_info "${GCS_BUCKET}/vault/instagram_saved_automated.json")
+INSTAGRAM_INFO=$(gcs_info "${GCS_BUCKET}/vault/instagram_scrape.json")
 INSTAGRAM_AGE=$(format_age "$(extract_date "$INSTAGRAM_INFO")")
-INSTAGRAM_COUNT=$(gcs_count "${GCS_BUCKET}/vault/instagram_saved_automated.json")
+INSTAGRAM_COUNT=$(gcs_count "${GCS_BUCKET}/vault/instagram_scrape.json")
 
 BOOKMARK_INFO=$(gcs_info "${GCS_BUCKET}/vault/bookmarks_automated.json")
 BOOKMARK_AGE=$(format_age "$(extract_date "$BOOKMARK_INFO")")

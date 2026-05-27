@@ -218,17 +218,11 @@ def extract_topic_from_content(content: str) -> str:
 # Routes
 # ------------------------------------------------------------------
 
-# Build immediately at startup (single worker, no lazy loading)
-download_db()
-load_nodes_to_memory()
-build_index()
-
 @app.route('/')
 def index():
     return jsonify({
         'service': 'serve-vault-search-v6', 'version': '6.0.0',
         'nodes': len(nodes_cache), 'index_built': _index_built,
-        'db_file_exists': os.path.exists(DB_FILE),
     })
 
 @app.route('/health')
@@ -242,13 +236,11 @@ def stats():
         'twitter': sum(1 for n in nodes_cache if n.get('type') == 'twitter_tweet'),
         'instagram': sum(1 for n in nodes_cache if n.get('type') == 'instagram_post'),
         'unique_terms': len(_doc_freqs),
-        'index_built': _index_built,
     })
 
 @app.route('/search')
 def search_endpoint():
-    if not _index_built:
-        build_index()
+    ensure_index()
     q = request.args.get('q', '').strip()
     limit = min(int(request.args.get('limit', 10)), MAX_RESULTS)
     search_type = request.args.get('type', None)

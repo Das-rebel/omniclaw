@@ -390,7 +390,7 @@ async function runHealthChecks() {
   console.log('[Health] Checking vault data...');
   const vaultSources = await Promise.all([
     checkVaultSource('Twitter Bookmarks', 'vault/twitter_bookmarks_automated.json'),
-    checkVaultSource('Instagram Saved', 'vault/instagram_saved_automated.json'),
+    checkVaultSource('Instagram Saved', 'vault/instagram_scrape.json'),
     checkVaultSource('Browser Bookmarks', 'vault/browser_bookmarks.json'),
     checkVaultSource('Knowledge Graph', 'unified_knowledge_graph.json'),
     checkVaultSource('Sync Summary', 'vault/latest_sync_summary.json'),

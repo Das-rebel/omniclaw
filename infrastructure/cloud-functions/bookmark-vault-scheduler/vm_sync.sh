@@ -70,7 +70,7 @@ python3 twitter_scraper_gcs.py >> "$LOG_FILE" 2>&1 || log "Twitter scraper error
 # Upload to GCS using gcloud storage (with SA key auth)
 log "Uploading to GCS..."
 if [ -f "$DATA_DIR/instagram_scrape.json" ]; then
-    gcloud storage cp "$DATA_DIR/instagram_scrape.json" "gs://$GCS_BUCKET/vault/instagram_saved_automated.json" 2>&1 | tee -a "$LOG_FILE"
+    gcloud storage cp "$DATA_DIR/instagram_scrape.json" "gs://$GCS_BUCKET/vault/instagram_scrape.json" 2>&1 | tee -a "$LOG_FILE"
 fi
 
 if [ -f "$DATA_DIR/twitter_bookmarks_automated.json" ]; then
@@ -79,7 +79,7 @@ fi
 
 # Make files world-readable for cloud function access
 if [ -f "$DATA_DIR/instagram_scrape.json" ]; then
-    gcloud storage objects add-iam-policy-binding "gs://$GCS_BUCKET/vault/instagram_saved_automated.json" --member="allUsers" --role="roles/storage.objectViewer" 2>&1 | tee -a "$LOG_FILE"
+    gcloud storage objects add-iam-policy-binding "gs://$GCS_BUCKET/vault/instagram_scrape.json" --member="allUsers" --role="roles/storage.objectViewer" 2>&1 | tee -a "$LOG_FILE"
 fi
 
 if [ -f "$DATA_DIR/twitter_bookmarks_automated.json" ]; then
@@ -105,7 +105,7 @@ def gcs_load(path):
         return None
 
 twitter = gcs_load('vault/twitter_bookmarks_automated.json')
-instagram = gcs_load('vault/instagram_saved_automated.json')
+instagram = gcs_load('vault/instagram_scrape.json')
 browser = gcs_load('vault/browser_bookmarks.json')
 
 bookmarks = []

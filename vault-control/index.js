@@ -84,7 +84,7 @@ app.get('/api/verify', auth, (req, res) => {
 
 const FILE_INDEX = {
   twitter:    'vault/twitter_bookmarks_automated.json',
-  instagram:  'vault/instagram_saved_automated.json',
+  instagram:  'vault/instagram_scrape.json',
   browser:    'vault/bookmarks_automated.json'
 };
 
@@ -160,7 +160,7 @@ app.get('/api/vault/search/preload', auth, async (req, res) => {
 app.get('/api/vault/status', auth, async (req, res) => {
   const files = [
     { key: 'vault/twitter_bookmarks_automated.json', type: 'array' },
-    { key: 'vault/instagram_saved_automated.json', type: 'posts' },
+    { key: 'vault/instagram_scrape.json', type: 'posts' },
     { key: 'vault/bookmarks_automated.json', type: 'bookmarks' },
     { key: 'vault/browser_bookmarks.json', type: 'posts' },
     { key: 'vault/latest_sync_summary.json', type: 'summary' },
@@ -245,7 +245,7 @@ app.get('/api/vault/history', auth, async (req, res) => {
 
 app.post('/api/sync/twitter', auth, async (req, res) => {
   try {
-    const result = await callCF('https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/twitter-sync', 'POST', {});
+    const result = await callCF('https://vault-pipeline-338789220059.asia-south1.run.app/api/sync/twitter', 'POST', {});
     res.json({ success: true, message: 'Twitter sync triggered', result });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -254,7 +254,7 @@ app.post('/api/sync/twitter', auth, async (req, res) => {
 
 app.post('/api/sync/instagram', auth, async (req, res) => {
   try {
-    const result = await callCF('https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/instagram-sync', 'POST', { force_refresh: true });
+    const result = await callCF('https://vault-pipeline-338789220059.asia-south1.run.app/api/sync/instagram', 'POST', { force_refresh: true });
     res.json({ success: true, message: 'Instagram sync triggered', result });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -263,7 +263,7 @@ app.post('/api/sync/instagram', auth, async (req, res) => {
 
 app.post('/api/sync/bookmarks', auth, async (req, res) => {
   try {
-    const result = await callCF('https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/bookmark-vault-scheduler', 'POST', {});
+    const result = await callCF('https://vault-pipeline-338789220059.asia-south1.run.app/api/sync/instagram', 'POST', { force_refresh: true });
     res.json({ success: true, message: 'Bookmark sync triggered', result });
   } catch (e) {
     res.json({ success: false, error: e.message });
@@ -272,9 +272,9 @@ app.post('/api/sync/bookmarks', auth, async (req, res) => {
 
 app.post('/api/sync/all', auth, async (req, res) => {
   const results = await Promise.allSettled([
-    callCF('https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/twitter-sync', 'POST', {}),
-    callCF('https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/instagram-sync', 'POST', { force_refresh: true }),
-    callCF('https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/bookmark-vault-scheduler', 'POST', {})
+    callCF('https://vault-pipeline-338789220059.asia-south1.run.app/api/sync/twitter', 'POST', {}),
+    callCF('https://vault-pipeline-338789220059.asia-south1.run.app/api/sync/instagram', 'POST', { force_refresh: true }),
+    callCF('https://vault-pipeline-338789220059.asia-south1.run.app/api/sync/instagram', 'POST', { force_refresh: true })
   ]);
   res.json({
     success: true,
@@ -288,10 +288,9 @@ app.post('/api/sync/all', auth, async (req, res) => {
 // ============ CLOUD FUNCTIONS STATUS ============
 app.get('/api/functions/status', auth, async (req, res) => {
   const functions = [
-    { name: 'twitter-sync', region: 'asia-south1', state: 'ACTIVE', url: 'https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/twitter-sync' },
-    { name: 'instagram-sync', region: 'asia-south1', state: 'ACTIVE', url: 'https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/instagram-sync' },
-    { name: 'bookmark-vault-scheduler', region: 'asia-south1', state: 'ACTIVE', url: 'https://asia-south1-omniclaw-personal-assistant.cloudfunctions.net/bookmark-vault-scheduler' },
-    { name: 'alexaHandler', region: 'us-central1', state: 'ACTIVE', url: 'https://us-central1-omniclaw-personal-assistant.cloudfunctions.net/alexaHandler' }
+    { name: 'vault-pipeline', region: 'asia-south1', state: 'ACTIVE', url: 'https://vault-pipeline-338789220059.asia-south1.run.app' },
+    { name: 'omniclaw-vault-search', region: 'asia-south1', state: 'ACTIVE', url: 'https://omniclaw-vault-search-338789220059.asia-south1.run.app' },
+    { name: 'serve-vault-search', region: 'asia-south1', state: 'ACTIVE', url: 'https://serve-vault-search-338789220059.asia-south1.run.app' }
   ];
   res.json(functions);
 });

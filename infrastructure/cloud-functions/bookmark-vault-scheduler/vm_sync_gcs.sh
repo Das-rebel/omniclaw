@@ -102,7 +102,7 @@ def gcs_load(path):
         return None
 
 twitter = gcs_load('vault/twitter_bookmarks_automated.json')
-instagram = gcs_load('vault/instagram_saved_automated.json')
+instagram = gcs_load('vault/instagram_scrape.json')
 browser = gcs_load('vault/browser_bookmarks.json')
 
 bookmarks = []

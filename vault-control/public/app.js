@@ -141,7 +141,7 @@
     var container = document.getElementById('vault-stats');
     var sources = [
       { key: 'vault/twitter_bookmarks_automated.json', title: 'Twitter Bookmarks', icon: 'twitter' },
-      { key: 'vault/instagram_saved_automated.json', title: 'Instagram Saved', icon: 'instagram' },
+      { key: 'vault/instagram_scrape.json', title: 'Instagram Saved', icon: 'instagram' },
       { key: 'vault/bookmarks_automated.json', title: 'Browser Bookmarks', icon: 'bookmarks' },
       { key: 'unified_knowledge_graph.json', title: 'Knowledge Graph', icon: 'kg' }
     ];
