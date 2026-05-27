@@ -46,3 +46,11 @@ tmp/
 # end managed by open-wa
 learning_base/vault.db
 services/vault-pipeline/vault.db
+
+# ── Auto-generated / temp files ──────────────────────
+skills/browser/sota-browser/venv/
+skills/browser/sota-browser/*.pyc
+skills/browser/sota-browser/__pycache__/
+apps/story-narrator/requirements.txt
+apps/story-narrator/Dockerfile.gdrive
+skills/providers/deepseek_nvidia.py
