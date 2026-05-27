@@ -5,10 +5,7 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --production
 
-COPY server.js ./
-COPY greenapi-wrapper.js ./
-COPY vault-search.js ./
-COPY rate-limiter.js ./
+COPY *.js ./
 
 ENV PORT=8080
 

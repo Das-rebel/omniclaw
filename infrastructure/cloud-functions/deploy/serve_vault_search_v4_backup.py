@@ -34,9 +34,6 @@ WEIGHTS = {
     'vlTags': 0.05,          # Visual tags - almost ignored
 }
 
-# Minimum score threshold - results below this are filtered out
-MIN_SCORE_THRESHOLD = 0.8
-
 # Stopwords for keyword extraction
 STOPWORDS = {
     'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -46,14 +43,7 @@ STOPWORDS = {
     'want', 'need', 'look', 'up', 'search', 'get', 'give', 'some', 'ideas',
     'about', 'what', 'how', 'who', 'when', 'where', 'why', 'which', 'that',
     'this', 'these', 'those', 'it', 'its', 'they', 'them', 'their', 'we',
-    'us', 'our', 'you', 'your', 'please', 'help', 'thanks', 'thank',
-    'just', 'like', 'really', 'actually', 'maybe', 'probably',
-    'recently', 'recent', 'bookmark', 'bookmarks', 'bookmarked',
-    'bookbokmarked', 'bookmarking', 'find', 'show', 'list',
-    # Ambiguous terms that cause false matches
-    'linked',   # matches linkedin.com, linked to, etc - not just bookmarked links
-    'posted',   # too generic
-    'repos',    # 79% false positive rate - 'repos' matches 'repost', 'repository', etc
+    'us', 'our', 'you', 'your', 'please', 'help', 'thanks', 'thank'
 }
 
 def download_db():
@@ -161,38 +151,28 @@ def search(query: str, limit: int = 10, search_type: str = None) -> List[Dict]:
         hashtags = metadata.get('hashtags', [])
         entities = metadata.get('entities', [])
         visual_desc = metadata.get('visual_description', '')
-        vl_tags = metadata.get('vlTags', [])
-        
-        vl_tags = metadata.get('vlTags', [])
         
         results.append({
             'id': row['id'],
             'type': row['type'],
             'name': row['name'] or '',
-            'content': (row['content'] or '')[:1000],  # FIXED: was 200, now 1000
+            'content': (row['content'] or '')[:200],
             'url': row['url'] or '',
             'timestamp': row['timestamp'] or '',
             'score': round(score, 3),
             'topic': topic,
             'hashtags': hashtags[:5] if isinstance(hashtags, list) else [],
             'entities': entities[:3] if isinstance(entities, list) else [],
-            'visual_description': visual_desc[:200] if visual_desc else '',  # FIXED: was 50, now 200
-            'metadata': {
+            'visual_description': visual_desc[:50] if visual_desc else '',
+            'metadata': {  # Simplified metadata for response
                 'topic': topic,
                 'topic_source': metadata.get('topic_source', 'unknown'),
-                'visual_description': visual_desc[:200] if visual_desc else '',
-                'vlTags': vl_tags[:10] if isinstance(vl_tags, list) else [],
-                'vlMood': metadata.get('vlMood', ''),
-                'narrative': metadata.get('narrative', '')[:300] if metadata.get('narrative') else '',
-                'vision_provider': metadata.get('vision_provider', ''),
+                'visual_description': visual_desc[:30] if visual_desc else ''
             }
         })
     
     # Sort by score (relevance) not timestamp
     results.sort(key=lambda x: x['score'], reverse=True)
-    
-    # Filter by minimum score threshold to remove spurious matches
-    results = [r for r in results if r['score'] >= MIN_SCORE_THRESHOLD]
     
     return results[:limit]
 
