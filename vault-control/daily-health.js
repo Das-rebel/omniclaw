@@ -23,7 +23,7 @@ const CONFIG = {
   VAULT_PASSWORD: process.env.VAULT_PASSWORD || 'omniclaw2026',
   
   WA_OUTBOX: '/tmp/omniclaw_openwa/outbox',
-  WA_DM_JID: '919003349852@s.whatsapp.net',
+  WA_DM_JID: process.env.WA_DM_JID || '',
   
   // Thresholds
   STALE_HOURS: 48,
@@ -179,8 +179,8 @@ const path = require('path');
 
 function queueWhatsAppMessage(jid, message) {
   // Try GreenAPI first (OpenWA deprecated since 2026-05-27)
-  const greenInstance = process.env.GREENAPI_INSTANCE || '7107630227';
-  const greenToken = process.env.GREENAPI_TOKEN || 'f9e7484d874043239fc97bbe3cfcef23660f6dc83a504591ae';
+  const greenInstance = process.env.GREENAPI_INSTANCE || '';
+  const greenToken = process.env.GREENAPI_TOKEN || '';
   const greenUrl = `https://${greenInstance.slice(0, 4)}.api.greenapi.com`;
 
   try {

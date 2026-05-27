@@ -4,7 +4,7 @@
 # Sends a WhatsApp message with vault data freshness status.
 #
 # Usage:
-#   ./daily-summary.sh              # sends to DM (919003349852@s.whatsapp.net)
+#   ./daily-summary.sh              # sends to DM
 #   ./daily-summary.sh --group       # sends to AI and Embedded group
 #   ./daily-summary.sh --dry-run     # print to stdout, don't send
 #
@@ -20,7 +20,7 @@ GCS_BUCKET="gs://omniclaw-knowledge-graph"
 GCS_PROJECT="omniclaw-personal-assistant"
 TIMESTAMP=$(date +%s)
 
-DEFAULT_JID="919003349852@s.whatsapp.net"
+DEFAULT_JID="${OMNICLAW_JID:-919003349852}@s.whatsapp.net"
 GROUP_JID="120363408616437592@g.us"
 
 # ─── ARGS ──────────────────────────────────────────────────

@@ -233,7 +233,7 @@ const PHASE_1_CONFIG = {
   OMNICLAW_2_0_ENABLED: {
     rolloutPercentage: 10,
     whitelist: [
-      "sdas22@gmail.com",
+      "YOUR_EMAIL@example.com",
       "beta-testers@omniclaw.ai",
       "internal@omniclaw.ai"
     ],

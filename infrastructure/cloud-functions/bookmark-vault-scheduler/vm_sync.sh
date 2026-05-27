@@ -36,15 +36,15 @@ mkdir -p "$DATA_DIR"
 
 # Export environment variables
 # Instagram
-export INSTAGRAM_USERNAME="sdas22"
-export INSTAGRAM_PASSWORD="Abfl@4321"
+export INSTAGRAM_USERNAME="${INSTAGRAM_USERNAME}"
+export INSTAGRAM_PASSWORD="${INSTAGRAM_PASSWORD}"
 export INSTAGRAM_COOKIES=""  # Will be fetched from GCS by *_gcs.py scrapers
 export VAULT_DIR="$DATA_DIR"
 
 # Twitter
-export TWITTER_USERNAME="sdas22"
-export TWITTER_PASSWORD="Abfl@4321"
-export TWITTER_EMAIL="sdas22@gmail.com"
+export TWITTER_USERNAME="${TWITTER_USERNAME}"
+export TWITTER_PASSWORD="${TWITTER_PASSWORD}"
+export TWITTER_EMAIL="${TWITTER_EMAIL}"
 
 cd "$SCRIPT_DIR"
 

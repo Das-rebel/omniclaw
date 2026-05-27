@@ -23,8 +23,8 @@ if (fs.existsSync(envPath)) {
   });
 }
 
-const INSTANCE = process.env.GREENAPI_INSTANCE || '7107630227';
-const TOKEN = process.env.GREENAPI_TOKEN || 'f9e7484d874043239fc97bbe3cfcef23660f6dc83a504591ae';
+const INSTANCE = process.env.GREENAPI_INSTANCE || '';
+const TOKEN = process.env.GREENAPI_TOKEN || '';
 const BASE_URL = `https://${INSTANCE.slice(0, 4)}.api.greenapi.com`;
 
 async function request(method, endpoint, payload) {

@@ -12,12 +12,12 @@ const fs = require('fs');
 const path = require('path');
 
 // ─── GreenAPI Credentials ─────────────────────────────
-const INSTANCE_ID = process.env.GREENAPI_INSTANCE || '7107630227';
-const API_TOKEN = process.env.GREENAPI_TOKEN || 'f9e7484d874043239fc97bbe3cfcef23660f6dc83a504591ae';
+const INSTANCE_ID = process.env.GREENAPI_INSTANCE || '';
+const API_TOKEN = process.env.GREENAPI_TOKEN || '';
 const PORT = process.env.PORT || 8090;
-const BOT_PHONE = process.env.BOT_PHONE || '919003349852';
-const WA_API_KEY = process.env.WA_API_KEY || 'omniclaw-wa-secret';
-const ADMIN_PHONES = ['919003349852'];
+const BOT_PHONE = process.env.BOT_PHONE || '';
+const WA_API_KEY = process.env.WA_API_KEY || '';
+const ADMIN_PHONES = (process.env.ADMIN_PHONES || '').split(',').filter(Boolean);
 
 // ─── GreenAPI Wrapper ────────────────────────────────
 const GreenAPI = require('./greenapi-wrapper');

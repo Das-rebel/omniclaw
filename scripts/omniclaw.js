@@ -46,10 +46,10 @@ const os = require('os');
 const { execSync } = require('child_process');
 
 const AUTH_DIR = '/Users/Subho/.omniclaw_auth';
-const SARVAM_API_KEY = 'sk_0ct1mbzm_wsoETmHdputtlGmsowQgnd7K';
-const ELEVENLABS_KEY = 'e58538575801b8faa7ea1b7dc41f60f2cc818d50e73a0ecbefbe0eb02aa1bc7c';
-const OMNICLAW_JID = '919003349852';
-const OMNICLAW_LID = '39372334338199';
+const SARVAM_API_KEY = process.env.SARVAM_API_KEY || '';
+const ELEVENLABS_KEY = process.env.ELEVENLABS_KEY || '';
+const OMNICLAW_JID = process.env.OMNICLAW_JID || '';
+const OMNICLAW_LID = process.env.OMNICLAW_LID || '';
 
 // Voice map
 const VOICE_MAP = {
