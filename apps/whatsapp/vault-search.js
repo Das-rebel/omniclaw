@@ -205,7 +205,7 @@ async function searchVault(query) {
   for (const q of hybridQueries) {
     if (!q.trim()) continue;
     try {
-      const r = await httpGet(VAULT_SEARCH_URL + '/search?q=' + encodeURIComponent(q) + '&limit=10', 30000);
+      const r = await httpGet(VAULT_SEARCH_URL + '/search?q=' + encodeURIComponent(q) + '&limit=20', 30000);
       const items = r && r.results ? r.results : [];
       for (const item of items) {
         if (!seenIds.has(item.id)) {
@@ -360,10 +360,14 @@ function buildVaultResult(item, index) {
   if (stats) lines.push(stats);
 
   // Tags + entities
-  const tags = item.tags || item.vlTags || item.metadata?.vlTags || [];
+  const tags = item.hashtags || item.tags || item.metadata?.tags || item.vlTags || item.metadata?.vlTags || [];
   const entities = item.entities || [];
-  const allTags = [...tags, ...entities].slice(0, 4);
-  if (allTags.length > 0) lines.push('\u{1F3F7} ' + allTags.join(' \u00B7 '));
+  const allTags = [...tags, ...entities].slice(0, 5);
+  if (allTags.length > 0) lines.push('🏷 ' + allTags.join(' · '));
+
+  // Location
+  const loc = item.metadata?.location || item.location || '';
+  if (loc && loc.length < 50) lines.push('📍 ' + loc);
 
   if (url) lines.push('\u{1F517} ' + url);
   return (index + 1) + '. ' + icon + ' ' + lines.join('\n   ');

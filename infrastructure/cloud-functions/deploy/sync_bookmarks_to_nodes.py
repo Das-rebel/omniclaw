@@ -44,6 +44,14 @@ def sync():
         
         node_type = 'instagram_post' if source == 'instagram' else 'twitter_tweet'
         
+        # Extract hashtags and entities from content for Instagram
+        if source == 'instagram' and content:
+            import re
+            tags = re.findall(r'#(\w+)', content or '')
+            meta = json.loads(metadata or '{}')
+            meta['hashtags'] = tags
+            metadata = json.dumps(meta)
+        
         cur.execute("""
             INSERT OR IGNORE INTO nodes (id, type, name, content, url, timestamp, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)

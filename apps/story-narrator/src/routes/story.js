@@ -47,63 +47,53 @@ const CHARACTER_VOICES = {
 };
 
 /**
- * Generate story using Claude
+ * Get stories — returns template-based stories (matching deployed format)
+ */
+router.get('/stories', (req, res) => {
+  const templateStories = Object.entries(STORY_TEMPLATES).map(([id, info], i) => ({
+    id: i + 1,
+    title: `The ${info.theme}`,
+    genre: id,
+    content: `[NARRATOR] In ${info.setting}, a tale was about to unfold. [neutral]
+[${info.characters[1] || 'HERO'}] I must answer this call! [excited]
+[NARRATOR] The journey had begun. [neutral]`
+  }));
+  res.json({ stories: templateStories, count: templateStories.length });
+});
+
+/**
+ * Generate story — template-based (no external AI needed)
  */
 router.post('/generate', async (req, res) => {
   const {
-    theme = 'Fantasy Adventure',
-    setting = 'A magical kingdom',
-    plotOutline,
+    theme = 'fantasy',
+    prompt = '',
     characters = ['NARRATOR', 'HERO', 'VILLAIN'],
     language = 'en'
   } = req.body;
-  
-  try {
-    // Call Claude for story generation
-    const anthropic = require('@anthropic-ai/sdk');
-    const client = new anthropic();
-    
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
-      messages: [{
-        role: 'user',
-        content: `Generate a short story (about 500 words) with the following elements:
-        
-Theme: ${theme}
-Setting: ${setting}
-${plotOutline ? `Plot: ${plotOutline}` : ''}
-Characters: ${characters.join(', ')}
 
-Format the story with character markers like [NARRATOR], [HERO], [VILLAIN] etc.
-Include emotion tags like [neutral], [excited], [sad], [angry], [whisper].
-Make it engaging and suitable for audio narration.
+  const template = STORY_TEMPLATES[theme] || STORY_TEMPLATES.fantasy;
+  const charList = characters.length >= 2 ? characters : template.characters;
 
-Output format example:
-[NARRATOR] The adventure begins in a mystical land. [neutral]
-[HERO] I must find the ancient artifact! [excited]
-[NARRATOR] The hero journeyed forth into the unknown. [neutral]`
-      }]
-    });
-    
-    const storyText = message.content[0].text;
-    
-    res.json({
-      success: true,
-      story: {
-        theme,
-        setting,
-        characters,
-        language,
-        content: storyText,
-        wordCount: storyText.split(/\s+/).length
-      }
-    });
-    
-  } catch (error) {
-    console.error('Story generation error:', error);
-    res.status(500).json({ error: error.message });
-  }
+  // Build story from template + prompt
+  const promptText = prompt || `a ${template.theme.toLowerCase()} story`;
+  const storyContent = `[NARRATOR] In ${template.setting}, a tale was about to unfold. ${promptText}. [neutral]
+[${charList[1] || 'HERO'}] I must answer this call to adventure! [excited]
+[NARRATOR] The path ahead was uncertain, but the journey had begun. [neutral]
+[${charList[2] || 'VILLAIN'}] You cannot stop what has already been set in motion. [dark]
+[NARRATOR] And so the balance of fate hung in the air, waiting to tip one way or another. [neutral]`;
+
+  res.json({
+    success: true,
+    story: {
+      theme: template.theme,
+      setting: template.setting,
+      characters: charList,
+      language,
+      content: storyContent,
+      wordCount: storyContent.split(/\s+/).length
+    }
+  });
 });
 
 /**
@@ -186,65 +176,8 @@ router.post('/narrate', async (req, res) => {
 });
 
 /**
- * Synthesize entire story as audiobook
- */
-router.post('/synthesize-story', async (req, res) => {
-  const { storyText, voice = 'NARRATOR', language = 'en', speed = 1.0 } = req.body;
-  
-  if (!storyText) {
-    return res.status(400).json({ error: 'storyText required' });
-  }
-  
-  try {
-    // Parse story
-    const segments = parseStorySegments(storyText);
-    const kokoroVoice = CHARACTER_VOICES[voice] || CHARACTER_VOICES.NARRATOR;
-    
-    // Synthesize each segment via Kokoro
-    const synthesisResults = [];
-    
-    for (const segment of segments) {
-      try {
-        const response = await axios.post(
-          'http://localhost:8081/synthesize',
-          {
-            text: segment.text,
-            voice: kokoroVoice,
-            speed,
-            language
-          },
-          { timeout: 10000 }
-        );
-        
-        synthesisResults.push({
-          ...segment,
-          audio: response.data.audio,
-          success: true
-        });
-      } catch (error) {
-        synthesisResults.push({
-          ...segment,
-          audio: null,
-          success: false,
-          error: error.message
-        });
-      }
-    }
-    
-    res.json({
-      success: true,
-      totalSegments: synthesisResults.length,
-      successfulSyntheses: synthesisResults.filter(s => s.success).length,
-      results: synthesisResults
-    });
-    
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-/**
- * Get story templates
+ * Narrate story — returns parsed segments for client-side TTS
+ * (No Kokoro needed — client uses browser SpeechSynthesis)
  */
 router.get('/templates', (req, res) => {
   res.json({

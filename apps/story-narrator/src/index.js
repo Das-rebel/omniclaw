@@ -8,9 +8,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
-const kokoroRoutes = require('./routes/kokoro');
-const epubRoutes = require('./routes/epub');
-const celebrityRoutes = require('./routes/celebrity');
 const voiceRoutes = require('./routes/voice');
 const storyRoutes = require('./routes/story');
 
@@ -37,32 +34,28 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
-    service: 'story-narrator-enhanced',
-    version: '2.0.0',
-    tts_providers: ['kokoro', 'elevenlabs', 'xtts']
+    service: 'story-narrator',
+    version: '3.0.0',
+    tts_providers: ['browser-tts', 'client-side']
   });
 });
 
-// Routes
-app.use('/api/kokoro', kokoroRoutes);
-app.use('/api/epub', epubRoutes);
-app.use('/api/celebrity', celebrityRoutes);
-app.use('/api/voices', voiceRoutes);
-app.use('/api/story', storyRoutes);
+// Routes — no /api prefix, no Kokoro
+app.use('/voices', voiceRoutes);
+app.use('/', storyRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
-    service: 'Story Narrator Enhanced',
-    version: '2.0.0',
+    service: 'Story Narrator',
+    version: '3.0.0',
     endpoints: {
       health: 'GET /health',
-      kokoro_tts: 'POST /api/kokoro/synthesize',
-      epub_audiobook: 'POST /api/epub/convert',
-      celebrity_voice: 'POST /api/celebrity/synthesize',
-      voices: 'GET /api/voices',
-      story_generate: 'POST /api/story/generate',
-      story_narrate: 'POST /api/story/narrate'
+      stories: 'GET /stories',
+      generate: 'POST /generate',
+      narrate: 'POST /narrate',
+      templates: 'GET /templates',
+      voices: 'GET /voices'
     }
   });
 });

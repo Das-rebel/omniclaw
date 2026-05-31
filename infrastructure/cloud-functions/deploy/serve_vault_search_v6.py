@@ -164,8 +164,13 @@ def search_bm25(query: str, limit: int = 10, type_filter: Optional[str] = None) 
             results.append((i, score))
     results.sort(key=lambda x: x[1], reverse=True)
     output = []
-    for idx, score in results[:limit]:
+    seen_urls = set()  # deduplicate by URL
+    for idx, score in results[:limit*2]:  # fetch extra to compensate for dedup
         node = nodes_cache[idx]
+        url = node.get('url', '')
+        if url and url in seen_urls:
+            continue
+        seen_urls.add(url)
         meta = node.get('metadata', {})
         content = node.get('content', '')
         topic = meta.get('topic', '') or extract_topic_from_content(content)
@@ -178,17 +183,23 @@ def search_bm25(query: str, limit: int = 10, type_filter: Optional[str] = None) 
             'timestamp': node['timestamp'],
             'score': round(score, 2),
             'topic': topic,
-            'hashtags': (meta.get('hashtags') or [])[:10],
-            'entities': (meta.get('entities') or [])[:5],
+            'hashtags': ((meta.get('hashtags') or extract_hashtags_from_content(content) or [e.get('name','') for e in (meta.get('entities') or []) if isinstance(e,dict) and e.get('type')=='hashtag'] or meta.get('vlTags')) or [])[:10],
+            'entities': ((meta.get('entities') or extract_entities_from_content(content)) or [])[:5],
             'metadata': {
                 'topic': topic,
-                'visual_description': (meta.get('visual_description') or '')[:300],
+                'tags': ((meta.get('hashtags') or extract_hashtags_from_content(content) or [e.get('name','') for e in (meta.get('entities') or []) if isinstance(e,dict) and e.get('type')=='hashtag'] or meta.get('vlTags')) or [])[:10],
                 'vlTags': (meta.get('vlTags') or [])[:10],
-                'narrative': (meta.get('narrative') or '')[:500],
-                'sentiment': meta.get('sentiment', ''),
+                'vlSubject': (meta.get('vlSubject') or '')[:200],
                 'mood': meta.get('vlMood', ''),
+                'narrative': (meta.get('narrative') or '')[:500],
+                'location': meta.get('location', ''),
+                'sentiment': meta.get('sentiment', ''),
+                'categories': (meta.get('categories') or [])[:5],
+                'topics': (meta.get('topics') or [])[:5],
             }
         })
+        if len(output) >= limit:
+            break
     return output
 
 # ------------------------------------------------------------------
@@ -214,15 +225,36 @@ def extract_topic_from_content(content: str) -> str:
             return name
     return ''
 
+def extract_hashtags_from_content(content: str) -> list:
+    if not content:
+        return []
+    return re.findall(r'#(\w+)', content)
+
+def extract_entities_from_content(content: str) -> list:
+    if not content:
+        return []
+    entities = []
+    for tag in re.findall(r'#(\w+)', content):
+        entities.append({'name': tag, 'type': 'hashtag'})
+    for mention in re.findall(r'@(\w+)', content):
+        entities.append({'name': mention, 'type': 'mention'})
+    return entities
+
 # ------------------------------------------------------------------
 # Routes
 # ------------------------------------------------------------------
+
+# Build immediately at startup (single worker, no lazy loading)
+download_db()
+load_nodes_to_memory()
+build_index()
 
 @app.route('/')
 def index():
     return jsonify({
         'service': 'serve-vault-search-v6', 'version': '6.0.0',
         'nodes': len(nodes_cache), 'index_built': _index_built,
+        'db_file_exists': os.path.exists(DB_FILE),
     })
 
 @app.route('/health')
@@ -236,11 +268,13 @@ def stats():
         'twitter': sum(1 for n in nodes_cache if n.get('type') == 'twitter_tweet'),
         'instagram': sum(1 for n in nodes_cache if n.get('type') == 'instagram_post'),
         'unique_terms': len(_doc_freqs),
+        'index_built': _index_built,
     })
 
 @app.route('/search')
 def search_endpoint():
-    ensure_index()
+    if not _index_built:
+        build_index()
     q = request.args.get('q', '').strip()
     limit = min(int(request.args.get('limit', 10)), MAX_RESULTS)
     search_type = request.args.get('type', None)
