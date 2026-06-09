@@ -82,27 +82,61 @@ class BrowserManager:
     async def _launch_browser(self) -> None:
         sock_path = f"/tmp/sota-b-{os.getpid()}.sock"
         headless = os.environ.get("BH_HEADLESS", "true").lower() != "false"
+        stealth = os.environ.get("BH_STEALTH", "true").lower() != "false"
+
+        # Base args
+        args = [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-features=IsolateOrigins,site-per-process",
+            f"--devtools-file-based-cdp-socket-name={sock_path}",
+            "--disable-gpu",
+            "--disable-extensions",
+            "--disable-background-networking",
+            "--disable-default-apps",
+            "--disable-sync",
+            "--no-first-run",
+        ]
+
+        # Full stealth args (from browser-use @ 96K stars)
+        if stealth:
+            args.extend([
+                "--disable-infobars",
+                "--disable-breakpad",
+                "--disable-component-extensions-with-background-pages",
+                "--disable-client-side-phishing-detection",
+                "--disable-component-update",
+                "--disable-ipc-flooding-protection",
+                "--disable-hang-monitor",
+                "--disable-prompt-on-repost",
+                "--metrics-recording-only",
+                "--enable-features=NetworkService,NetworkServiceInProcess",
+                "--password-store=basic",
+                "--use-mock-keychain",
+            ])
+
         self._browser = await self._playwright.chromium.launch(
             headless=headless,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process",
-                f"--devtools-file-based-cdp-socket-name={sock_path}",
-                "--disable-gpu",
-                "--disable-extensions",
-                "--disable-background-networking",
-                "--disable-default-apps",
-                "--disable-sync",
-                "--no-first-run",
-            ],
+            args=args,
         )
         self._using_existing = False
-        print("[sota-browser] Browser ready (fresh launch)", file=sys.stderr)
+        self._stealth_enabled = stealth
+        print(f"[sota-browser] Browser ready (fresh launch, stealth={'on' if stealth else 'off'})", file=sys.stderr)
 
     async def shutdown(self) -> None:
+        # Save persistent profiles before shutting down
+        for sid, session in list(self.sessions.items()):
+            profile_dir = session.get("profile_dir")
+            if profile_dir and sid in self.contexts:
+                try:
+                    state_path = os.path.join(profile_dir, "state.json")
+                    await self.contexts[sid].storage_state(path=state_path)
+                    print(f"[sota-browser] Saved profile: {state_path}", file=sys.stderr)
+                except Exception as e:
+                    print(f"[sota-browser] Profile save failed: {e}", file=sys.stderr)
+
         for p in self.pages.values():
             try:
                 await p["page"].close()
@@ -142,12 +176,53 @@ class BrowserManager:
                     "note": "Using existing Chrome context",
                 }
 
-        context = await self._browser.new_context(
-            viewport={"width": options.get("width") or 1280, "height": options.get("height") or 720},
-            user_agent=USER_AGENT,
-            locale="en-US",
-            timezone_id="America/New_York",
-        )
+        # Profile persistence — use a named directory if provided
+        profile_dir = options.get("profile_dir")
+        context_kwargs: dict = {
+            "viewport": {"width": options.get("width") or 1280, "height": options.get("height") or 720},
+            "user_agent": options.get("user_agent") or USER_AGENT,
+            "locale": "en-US",
+            "timezone_id": "America/New_York",
+        }
+
+        if profile_dir:
+            # Persist browser profile across sessions
+            os.makedirs(profile_dir, exist_ok=True)
+            # Copy cookies/storage files if they exist
+            context_kwargs["storage_state"] = os.path.join(profile_dir, "state.json")
+            if os.path.exists(context_kwargs["storage_state"]):
+                print(f"[sota-browser] Loading persistent profile: {profile_dir}", file=sys.stderr)
+
+        context = await self._browser.new_context(**context_kwargs)
+
+        # Apply playwright-stealth evasions (anti-detection)
+        if getattr(self, "_stealth_enabled", True):
+            try:
+                from playwright_stealth import Stealth
+                stealth_obj = Stealth(
+                    # Override platform to MacIntel (we're on macOS M1/M2)
+                    navigator_platform_override="MacIntel",
+                    # Override languages
+                    navigator_languages_override=("en-US", "en"),
+                    # Spoof WebGL GPU info
+                    webgl_vendor_override="Intel Inc.",
+                    webgl_renderer_override="Intel Iris OpenGL Engine",
+                    # Disable chrome.runtime (causes false positives)
+                    chrome_runtime=False,
+                    # Disable hairline (Modernizr offsetHeight) — can interfere
+                    hairline=False,
+                    # Disable iframe.contentWindow (breaks some sites)
+                    iframe_content_window=False,
+                )
+                await stealth_obj.apply_stealth_async(context)
+                print("[sota-browser] 🥷 Stealth evasions applied", file=sys.stderr)
+            except ImportError:
+                # Fallback: minimal evasion
+                pass
+            except Exception as e:
+                print(f"[sota-browser] Stealth warning: {e}", file=sys.stderr)
+
+        # Manual navigator.webdriver fallback (belt-and-suspenders)
         try:
             await context.add_init_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => false});"
@@ -155,9 +230,16 @@ class BrowserManager:
         except Exception:
             pass
 
-        self.sessions[session_id] = {"user_id": user_id, "context": context}
+        self.sessions[session_id] = {"user_id": user_id, "context": context, "profile_dir": profile_dir}
         self.contexts[session_id] = context
-        return {"id": session_id, "user_id": user_id, "created": True, "existing_browser": False}
+        return {
+            "id": session_id,
+            "user_id": user_id,
+            "created": True,
+            "existing_browser": False,
+            "stealth": getattr(self, "_stealth_enabled", True),
+            "profile_dir": profile_dir,
+        }
 
     async def create_tab(self, session_id: str, url: str = None) -> dict:
         if session_id not in self.contexts:

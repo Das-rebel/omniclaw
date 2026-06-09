@@ -1,0 +1,2 @@
+[console_scripts]
+cmd-headless = cmd_headless:main

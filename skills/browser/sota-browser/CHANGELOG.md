@@ -1,5 +1,36 @@
 # SOTA Browser MCP Server - Changelog
 
+## v2.1.0 (2026-05-30) - cmd-headless CLI + Chrome Cookie Import
+
+### cmd-headless CLI (NEW)
+- `cmd-headless` — one-command browser automation CLI
+- Modes: `--local` (Playwright), `--cloud` (Browser Use API), `--cdp` (existing Chrome)
+- Cookie import: `--cookies chrome|brave|firefox [--domain DOMAIN]`
+- Auto URL extraction from natural language prompts
+- Screenshot capture: `--screenshot path.png`
+- JSON output: `--json`
+- Installed via `pip install -e .` with entry point
+- Symlinked to `~/bin/cmd-headless` for global access
+
+### Chrome Cookie Import (NEW)
+- `browser_import_cookies_from_browser` — extract fresh cookies from Chrome/Brave/Firefox
+- Uses `browser_cookie3` to read browser SQLite cookie database
+- Handles expired cookie filtering, deduplication, domain filtering
+- 57 Google cookies across 13 domains extracted in <1s
+- Added to both Python MCP server AND PI TypeScript extension
+- PI extension shells out to `cmd-headless` for extraction
+
+### CDP Connection (NEW)
+- `--cdp` flag connects Playwright to existing Chrome via remote debugging
+- Uses user's real browser session (logged in, authenticated)
+- Auto-launches Chrome with debugging port if not running
+- Falls back gracefully if CDP not available
+
+### pyproject.toml
+- Converted from JSON format to proper TOML
+- Added entry point: `cmd-headless = "cmd_headless:main"`
+- Added optional dependency: `browser_cookie3`
+
 ## v2.0.0 (2026-05-09) - Form Engine v2: CSS Selector Matching + React Select
 
 ### Breaking: Architecture Rewrite

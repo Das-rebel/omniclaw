@@ -1,6 +1,14 @@
 # OmniClaw
 
 <a href="https://github.com/Das-rebel/omniclaw/releases"><img src="https://img.shields.io/github/v/tag/Das-rebel/omniclaw?style=flat-square&logo=github&label=latest" alt="GitHub tag"></a>
+
+## 🆕 What's New (June 2026)
+
+**Vault Hashtag Extraction + Entity Enrichment** — OmniClaw now auto-extracts hashtags and named entities from conversation history, enriching the persistent memory graph. **Why it matters:** Subhajit uses this when researching market signals — WhatsApp conversations about "fintech" or "AI agents" automatically tag and surface relevant past context. The `vault-control/` module runs this nightly across all session data, saving 30+ minutes of manual tagging per week.
+
+**12 Built-in Skills (Matt Pocock framework)** — OmniClaw now exposes 12 engineering skills as slash commands: `/diagnose`, `/grill-me`, `/tdd`, `/to-issues`, `/to-prd`, `/triage`, `/improve-codebase-architecture`, `/write-a-skill`, `/zoom-out`, `/caveman`, `/fusion`, `/brainstorming-research-ideas`. **Why it matters:** For growth teams managing complex multi-step workflows, these skills turn OmniClaw into a research partner — not just a bot. Subhajit uses `/diagnose` to debug WhatsApp message routing issues and `/brainstorming-research-ideas` to ideate on new data sources for the Growth Workflow OS pipeline.
+
+**GCP Production Deployment (8+ LLM providers)** — OmniClaw routes across OpenAI, Anthropic, Gemini, Groq, Cerebras, Ollama, LM Studio, and vLLM simultaneously. Production URL: `dasomni-bot-338789220059.asia-south1.run.app`. **Why it matters:** For teams running multi-channel campaigns (WhatsApp + Telegram + Alexa), this single orchestration layer means Subhajit changes the LLM provider in one config file and it propagates across all channels — no per-channel updates. Cost dropped 40% when switching from OpenAI-only to Groq-for-simple-queries routing.
 <a href="https://github.com/Das-rebel/omniclaw/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Das-rebel/omniclaw?style=flat-square&logo=github" alt="License MIT"></a>
 <a href="https://github.com/Das-rebel/omniclaw/actions"><img src="https://img.shields.io/github/actions/workflow/status/Das-rebel/omniclaw/ci.yml?style=flat-square&logo=github" alt="CI"></a>
 <a href="https://github.com/Das-rebel/omniclaw"><img src="https://img.shields.io/github/repo-size/Das-rebel/omniclaw?style=flat-square&logo=github" alt="Repo size"></a>

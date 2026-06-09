@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: sota-browser
+Version: 1.4.0
+Summary: SOTA Browser — CDP-based browser automation with anti-detection, cookie import, and cmd-headless CLI
+Author: PI Browser Team
+Requires-Python: >=3.9
+Requires-Dist: playwright>=1.40.0
+Requires-Dist: httpx>=0.25.0
+Provides-Extra: all
+Requires-Dist: browser_cookie3>=0.19.0; extra == "all"
+Requires-Dist: scrapling>=0.5.0; extra == "all"
+Requires-Dist: uvicorn[standard]; extra == "all"
+Provides-Extra: cookies
+Requires-Dist: browser_cookie3>=0.19.0; extra == "cookies"

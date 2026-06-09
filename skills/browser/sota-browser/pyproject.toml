@@ -1,17 +1,39 @@
-{
-  "name": "sota-browser",
-  "version": "1.0.0",
-  "description": "SOTA Browser MCP - CDP-based browser automation with anti-detection",
-  "author": "PI Browser Team",
-  "main": "mcp_client.py",
-  "dependencies": {
-    "playwright": ">=1.40.0",
-    "httpx": ">=0.25.0",
-    "scrapling": ">=0.5.0"
-  },
-  "optional-dependencies": {
-    "scrapling": ["scrapling"],
-    "uvicorn": ["uvicorn[standard]"]
-  },
-  "python_requires": ">=3.9"
-}
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sota-browser"
+version = "1.4.0"
+description = "SOTA Browser — CDP-based browser automation with anti-detection, cookie import, and cmd-headless CLI"
+authors = [{name = "PI Browser Team"}]
+requires-python = ">=3.9"
+dependencies = [
+    "playwright>=1.40.0",
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+all = [
+    "browser_cookie3>=0.19.0",
+    "scrapling>=0.5.0",
+    "uvicorn[standard]",
+]
+cookies = ["browser_cookie3>=0.19.0"]
+
+[project.scripts]
+cmd-headless = "cmd_headless:main"
+
+[tool.setuptools]
+py-modules = [
+    "browser_manager",
+    "browser_http_server",
+    "config",
+    "cmd_headless",
+    "mcp_server",
+    "mcp_client",
+    "enhancv_browse",
+    "enhancv_setup",
+    "extract_brave_cookies",
+    "form_engine",
+]

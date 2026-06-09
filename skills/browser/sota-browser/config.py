@@ -7,7 +7,7 @@ DEFAULT_TIMEOUT = 15000  # 15s
 FAST_WAIT = 0.1
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
 )
 
 MCP_PROTOCOL_VERSION = "2024-11-05"

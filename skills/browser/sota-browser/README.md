@@ -1,213 +1,209 @@
-# SOTA Browser MCP Server
+# sota-browser
 
-A comprehensive browser automation MCP server combining the best features from:
-- **browser-harness**: Self-healing CDP-based browser control
-- **camofox-browser**: Anti-detection with fingerprint spoofing
-- **Scrapling**: Adaptive web scraping with element relocalization
+**SOTA Browser** — Production-grade browser automation with anti-detection, cookie import, and CDP support.
 
-## Features
+> Ships with `cmd-headless` CLI and 57 Python tools. Globally deployed via pip.
 
-### Browser Control
-- CDP-based browser automation via Playwright
-- Isolated browser sessions per user
-- Stable element refs (e1, e2, e3...) for reliable interaction
-- Accessibility tree snapshots (~90% smaller than raw HTML)
+---
 
-### Anti-Detection
-- Removes `webdriver` automation indicators
-- Spoofs hardware concurrency and device memory
-- Randomizes canvas fingerprints
-- WebGL renderer spoofing
-- Configurable user agent and locale
-
-### Scraping Integration
-- Scrapling adapter for adaptive parsing
-- Handles JavaScript-heavy sites
-- Network idle detection
-- Proxy support
-
-## Installation
+## Quick Start
 
 ```bash
-cd ~/mcp-browser
-./install.sh
+# CLI (any terminal)
+cmd-headless --local --json "go to github.com"
+
+# Python (any project)
+python3 -c "from browser_manager import BrowserManager; print('OK')"
 ```
 
-## Usage
+---
 
-### Mode 1: MCP Stdio (for PI)
+## CLI Usage
 
 ```bash
-source venv/bin/activate
-python3 mcp_server.py
+cmd-headless [options] "go to <url>" [command...]
 ```
 
-Configure in PI's MCP settings:
-```json
-{
-  "mcpServers": {
-    "sota-browser": {
-      "command": "python3",
-      "args": ["/Users/Subho/mcp-browser/mcp_server.py"]
-    }
-  }
-}
-```
-
-### Mode 2: HTTP Server (for cloud/remote)
+### Browse
 
 ```bash
-source venv/bin/activate
-python3 -m uvicorn src.server:app --host 0.0.0.0 --port 9377
+# Stealth browsing (default)
+cmd-headless --local --json "go to example.com"
+
+# Screenshot
+cmd-headless --local --screenshot "go to github.com"
+
+# No stealth (for testing)
+cmd-headless --local --no-stealth --json "go to example.com"
 ```
 
-## Available Tools
+### Cookies
 
-### Core Browser Tools (27)
+```bash
+# Import Chrome cookies for a domain, then browse
+cmd-headless --cookies chrome --domain github.com --json "go to github.com"
 
-| Tool | Description |
-|------|-------------|
-| `browser_create_session` | Create isolated browser session |
-| `browser_create_tab` | Create new tab in session |
-| `browser_navigate` | Navigate to URL |
-| `browser_snapshot` | Get accessibility tree with element refs |
-| `browser_click` | Click by selector/ref/coordinates |
-| `browser_type` | Type text into element |
-| `browser_scroll` | Scroll page |
-| `browser_screenshot` | Take screenshot |
-| `browser_evaluate` | Execute JavaScript (supports frame_index) |
-| `browser_list_frames` | List all frames/IFrames |
-| `browser_evaluate_in_frame` | Execute JS in specific frame |
-| `browser_get_console_logs` | Capture console messages |
-| `browser_get_frame_content` | Get HTML from specific frame |
-| `browser_inject_all_frames` | Run JS in ALL frames |
-| `browser_press_key` | Press key (Enter, Tab, etc.) |
-| `browser_wait` | Explicit wait |
-| `browser_extract_images` | Extract images from page |
-| `browser_list_tabs` | List open tabs |
-| `browser_close_tab` | Close tab |
-| `browser_http_get` | Direct HTTP GET (no browser) |
-| `browser_import_cookies` | Import cookies for auth |
-| `browser_info` | Get browser info |
-| `browser_close_session` | Close session and all tabs |
-| `browser_get_state` | Get indexed clickable elements |
-| `browser_get_html` | Get raw HTML of page/element |
-| `browser_go_back` | Navigate back in history |
-| `browser_switch_tab` | Switch to tab by index |
+# Import from specific browser
+cmd-headless --cookies chrome   # Chrome
+cmd-headless --cookies brave   # Brave
+cmd-headless --cookies firefox # Firefox
 
-### Form Engine Tools (6)
+# Import only (get JSON)
+cmd-headless --cookies chrome --import-only
 
-| Tool | Description |
-|------|-------------|
-| `browser_parse_resume` | Parse plain-text resume into structured profile (name, email, phone, education, experience, skills, etc.) |
-| `browser_analyze_form` | Analyze page form structure — detects Google Forms, standard HTML, Material UI, Ant Design, Bootstrap. Returns field types, labels, options, required status, navigation buttons |
-| `browser_fill_form` | Fill form fields using structured profile data. Auto-analyzes form, matches fields to profile keys, fills text/select/radio/checkbox/date/file fields |
-| `browser_fill_form_from_resume` | One-shot: parse resume text + fill form. Pass raw resume, it extracts profile and auto-fills all matching fields |
-| `browser_fill_form_page` | Fill current page of multi-page form and click Next (for Google Forms multi-section) |
-| `browser_submit_form` | Auto-detect and click the Submit button |
+# Filter by domain
+cmd-headless --cookies chrome --domain google.com --import-only
+```
 
-### Supported Form Types
+### Profile Persistence
 
-- **Google Forms** — Material Design widgets, radio groups, checkboxes, dropdowns, linear scales, date pickers, multi-page sections
-- **Standard HTML forms** — `<input>`, `<textarea>`, `<select>`, radio/checkbox groups
-- **Material UI (MUI)** — `.MuiInputBase-root`, `.MuiSelect-root`, `.MuiFormControl-root`
-- **Ant Design** — `.ant-input`, `.ant-select`, `.ant-form-item`
-- **Bootstrap** — `.form-control`, `.form-select`, `.form-floating`
-- **Generic SPA** — Label proximity heuristics, `role` attributes, `aria-label`, `contenteditable`
+```bash
+# Save cookies/localStorage to profile
+cmd-headless --profile-dir ~/.my-profile --json "go to github.com"
 
-### Profile Fields Recognized (50+ semantic types)
+# Reuse profile on next run (no --cookies flag needed)
+cmd-headless --profile-dir ~/.my-profile --json "go to github.com"
+```
 
-**Personal:** first_name, last_name, full_name, middle_name, preferred_name, email, email_confirm, phone, phone_type
-**Location:** address, city, state, zip, postal_code, country
-**Web:** linkedin, github, portfolio, website, twitter
-**Education:** school, university, highest_degree, graduation_date, gpa
-**Experience:** current_company, current_title, start_date, end_date
-**Skills:** skills, languages, certifications
-**EEO:** gender, pronouns, veteran, disability, ethnicity, hispanic
-**Work Auth:** work_authorization, visa_status, sponsorship_required
-**Other:** salary, referral_source, referred_by, birthday, cover_letter, resume (file upload)
+### CDP Mode (Real Chrome)
 
-## Environment Variables
+For sites with aggressive canvas/WebGL fingerprinting:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MCP_BROWSER_HOST` | `http://localhost:9377` | HTTP server URL |
-| `MCP_BROWSER_API_KEY` | (none) | API key for auth |
-| `MCP_BROWSER_PORT` | `9377` | Server port |
-| `BH_DEBUG_CLICKS` | `false` | Show click overlays |
-| `CAMOFOX_API_KEY` | (none) | Alternative API key name |
+```bash
+# Terminal 1: Launch Chrome with remote debugging
+./launch-chrome-cdp.sh
 
-## API Endpoints (HTTP mode)
+# Terminal 2: Use CDP mode
+cmd-headless --cdp --json "go to github.com"
+```
 
-### Sessions
-- `POST /sessions` - Create session
-- `GET /sessions` - List sessions
-- `GET /sessions/{id}` - Get session
-- `DELETE /sessions/{id}` - Delete session
+### Output Modes
 
-### Tabs
-- `POST /sessions/{id}/tabs` - Create tab
-- `GET /sessions/{id}/tabs` - List tabs
-- `POST /sessions/{id}/tabs/{tab}/navigate` - Navigate
-- `GET /sessions/{id}/tabs/{tab}/snapshot` - Get snapshot
-- `POST /sessions/{id}/tabs/{tab}/click` - Click
-- `POST /sessions/{id}/tabs/{tab}/type` - Type
-- `POST /sessions/{id}/tabs/{tab}/scroll` - Scroll
-- `GET /sessions/{id}/tabs/{tab}/screenshot` - Screenshot
-- `DELETE /sessions/{id}/tabs/{tab}` - Close tab
+```bash
+--json       # Structured JSON output (default)
+--text       # Plain text
+--screenshot # Screenshot (saves to file)
+--cost       # Show cost breakdown
+```
 
-### Scraping
-- `POST /fetch` - Fetch URL
-- `POST /extract` - Extract structured data
+---
 
-## Example Workflow
+## Python API
 
 ```python
-from mcp_client import BrowserMCPClient
+# Import directly from the installed package
+from browser_manager import BrowserManager
+from cmd_headless import extract_cookies, browse_local, browse_cloud
+from config import USER_AGENT
+from tools import get_all_schemas
 
-async def demo():
-    client = BrowserMCPClient()
-    
-    # Create session
-    session = await client.create_session(user_id="test")
-    
-    # Create tab and navigate
-    tab = await client.create_tab(session_id=session["id"])
-    await client.navigate(session_id=session["id"], tab_id=tab["id"], url="https://example.com")
-    
-    # Get page snapshot
-    snapshot = await client.snapshot(session_id=session["id"], tab_id=tab["id"])
-    print(f"Found {len(snapshot['elements'])} elements")
-    
-    # Click e5 (5th interactive element)
-    await client.click(session_id=session["id"], tab_id=tab["id"], ref="e5")
-    
-    # Type into search field
-    await client.type_text(session_id=session["id"], tab_id=tab["id"], 
-                          text="search query", ref="e3")
-    
-    # Clean up
-    await client.close_session(session["id"])
+# Browser manager
+bm = BrowserManager()
+await bm.launch()
+context = await bm.new_context()
+page = await context.new_page()
+await page.goto("https://example.com")
+
+# Cookie extraction
+cookies = extract_cookies("chrome", domain="github.com")
+print(f"Got {len(cookies)} cookies")
+
+# List all 57 tools
+schemas = get_all_schemas()
+print(f"{len(schemas)} tools available")
 ```
 
-## Local vs Cloud
+---
 
-### Local Usage (PI)
-- Run `mcp_server.py` as stdio process
-- PI spawns the server and communicates via JSON-RPC
+## Architecture
 
-### Cloud Usage (Remote API)
-- Deploy HTTP server on cloud infrastructure
-- Use REST API with Bearer token auth
-- Supports horizontal scaling with session affinity
+```
+cmd_headless.py      # CLI entry point + mode dispatcher
+browser_manager.py   # Playwright browser management + stealth
+cmd_headless.py      # Core browser commands
+config.py            # Defaults, user-agent, flags
+tools/
+  __init__.py        # 57 MCP tools
+  cookies.py         # Cookie import/export
+  screenshot.py      # Screenshot
+  navigate.py        # Navigation
+  state.py           # State management
+```
 
-## Security
+---
 
-- API key authentication via `X-API-Key` header
-- Cookie import restricted to logged-in sessions
-- Proxy support for IP rotation
-- Session isolation between users
+## Benchmark Results
 
-## License
+### Bot Detection: 7/7 PASS ✅
 
-MIT
+| Test | Result |
+|------|--------|
+| bot.sannysoft.com | ✅ WebDriver Advanced passed |
+| browserleaks.com/js | ✅ webdriver=false, real plugins |
+| deviceandbrowserinfo | ✅ No HeadlessChrome leak |
+| pixelscan.net | ✅ No bot detection |
+| antoinevastel.com/bots | ✅ No detection |
+| iphey.com | ✅ No automation flags |
+| fingerprint.com | ✅ Page loads cleanly |
+
+### Fingerprinting: Known Limits
+
+| Vector | Status | Solution |
+|--------|--------|----------|
+| WebDriver/automation flags | ✅ Fixed | stealth mode |
+| Sec-CH-UA header | ✅ Fixed | Chrome args + JS override |
+| HeadlessChrome leak | ✅ Fixed | UA + brands override |
+| Canvas fingerprint | ❌ Hard limit | Use `--cdp` (real Chrome) |
+| WebGL fingerprint | ❌ Hard limit | Use `--cdp` (real Chrome) |
+| Font enumeration | ✅ Clean | |
+| WebRTC local IP | ✅ No leak | |
+
+---
+
+## Global Deployment
+
+```bash
+# Install
+cd ~/omniclaw/skills/browser/sota-browser
+./install.sh
+
+# Reinstall after updates
+./install.sh
+
+# Uninstall
+./uninstall.sh
+```
+
+---
+
+## Requirements
+
+- Python 3.12+
+- Playwright (`playwright install chromium`)
+- Chrome/Chromium (for `--local` mode)
+- Chrome with `--remote-debugging-port` (for `--cdp` mode)
+
+---
+
+## Troubleshooting
+
+**"cmd-headless: command not found"**
+```bash
+export PATH="/Users/Subho/Library/Python/3.12/bin:$PATH"
+# Add to ~/.zshrc for permanent fix
+```
+
+**Cookies not working**
+```bash
+# Chrome encrypts session cookies via keychain
+# Use --cdp mode with real Chrome instead
+./launch-chrome-cdp.sh
+cmd-headless --cdp --json "go to github.com"
+```
+
+**Canvas fingerprint detected**
+```bash
+# Only CDP mode (real Chrome) can bypass this
+./launch-chrome-cdp.sh
+cmd-headless --cdp --json "go to <site>"
+```

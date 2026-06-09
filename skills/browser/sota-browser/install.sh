@@ -1,35 +1,45 @@
 #!/bin/bash
+# ============================================================================
+# sota-browser — One-command install script
+# Installs cmd-headless globally for all projects on this system
+# ============================================================================
 set -e
-cd "$(dirname "${BASH_SOURCE[0]}")"
 
-echo "=== SOTA Browser MCP Installation ==="
+SOTA_DIR="$(cd "$(dirname "$0")" && pwd)"
+echo "🚀 Installing sota-browser from: $SOTA_DIR"
 
-# Create venv
-[ ! -d "venv" ] && python3 -m venv venv
-source venv/bin/activate
-
-# Install deps
-pip install --upgrade pip
-pip install playwright httpx uvicorn fastapi pydantic
-
-# Install browser
-playwright install chromium
-
-# Make executable
-chmod +x mcp_server.py mcp_client.py
-
-# Create data dirs
-mkdir -p ~/.mcp-browser/{profiles,cookies,logs}
-
+# 1. Install dependencies
 echo ""
-echo "=== Installed ==="
-echo "Run MCP server: python3 mcp_server.py"
-echo "Run HTTP server: python3 -m uvicorn src.server:app --port 9377"
+echo "📦 Installing Python dependencies..."
+python3 -m pip install --user playwright playwright-stealth browser_cookie3 httpx 2>&1 | tail -3
+
+# 2. Install Playwright browsers (if needed)
 echo ""
-echo "19 tools available:"
-echo "  browser_create_session, browser_create_tab, browser_navigate"
-echo "  browser_snapshot, browser_click, browser_type, browser_scroll"
-echo "  browser_press_key, browser_wait, browser_screenshot, browser_evaluate"
-echo "  browser_extract_images, browser_list_tabs, browser_close_tab"
-echo "  browser_http_get, browser_import_cookies, browser_info"
-echo "  browser_upload_file, browser_close_session"
+echo "🌐 Checking Playwright browsers..."
+python3 -m playwright install chromium 2>&1 | tail -3
+
+# 3. Install sota-browser package globally
+echo ""
+echo "📦 Installing sota-browser..."
+cd "$SOTA_DIR"
+python3 -m pip install --user -e ".[cookies]" 2>&1 | tail -3
+
+# 4. Ensure PATH includes user bin
+USER_BIN=$(python3 -m site --user-base)/bin
+if ! echo "$PATH" | grep -q "$USER_BIN"; then
+    echo ""
+    echo "⚠️  Adding $USER_BIN to PATH..."
+    echo "Add this to your ~/.zshrc:"
+    echo "  export PATH=\"$USER_BIN:\$PATH\""
+fi
+
+# 5. Verify
+echo ""
+echo "============================================"
+CMD=$(which cmd-headless 2>/dev/null || echo "$USER_BIN/cmd-headless")
+echo "✅ sota-browser installed!"
+echo "   CLI: $CMD"
+echo "   Python: python3 -c 'from browser_manager import BrowserManager'"
+echo ""
+$CMD --version
+echo "============================================"

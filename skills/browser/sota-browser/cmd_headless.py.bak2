@@ -1,0 +1,1042 @@
+#!/usr/bin/env python3
+"""
+cmd-headless — One-command browser automation CLI
+
+A dead-simple wrapper around sota-browser for headless browsing,
+cookie management, CDP connection to existing Chrome, and cloud browser-use integration.
+
+Usage:
+  # Quick browse (local Playwright)
+  cmd-headless "go to github.com and show trending repos"
+
+  # Connect to your EXISTING Chrome (uses your real session — logged in!)
+  cmd-headless --cdp "go to gemini.google.com and ask something"
+
+  # Import cookies from Chrome, then browse
+  cmd-headless --cookies chrome "go to gemini.google.com"
+
+  # CDP + cookie import (best of both worlds)
+  cmd-headless --cdp --cookies chrome --domain google.com "go to gemini.google.com"
+
+  # Force local mode (no API key needed)
+  cmd-headless --local "take a screenshot of news.ycombinator.com"
+
+  # Cloud mode (needs BROWSER_USE_API_KEY)
+  cmd-headless --cloud "login to gmail and check inbox"
+
+  # Auto-detect mode (cloud if key set, local otherwise) — DEFAULT
+  cmd-headless --auto "navigate to python.org"
+
+  # Just import cookies (no browsing)
+  cmd-headless --import-only --cookies chrome --domain github.com
+
+  # Print installed version
+  cmd-headless --version
+
+Environment:
+  BROWSER_USE_API_KEY    Browser Use Cloud API key (starts with 'bu_')
+  BH_HEADLESS            Set to 'false' to show browser window
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import re
+import sys
+import time
+import uuid
+from pathlib import Path
+from typing import Dict, List, Optional
+
+# ---------------------------------------------------------------------------
+# Path setup — ensure sota-browser is importable
+# ---------------------------------------------------------------------------
+
+_SOTA_DIR = Path(__file__).resolve().parent
+if str(_SOTA_DIR) not in sys.path:
+    sys.path.insert(0, str(_SOTA_DIR))
+
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+)
+
+# Manual stealth fallback JS — comprehensive anti-detection
+# Used only when playwright-stealth library is unavailable
+_MANUAL_STEALTH_JS = r"""
+(function() {
+  // -- navigator properties --
+  Object.defineProperty(navigator, 'webdriver', {get: () => false, configurable: true});
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => [1,2,3,4,5], configurable: true
+  });
+  Object.defineProperty(navigator, 'languages', {
+    get: () => ['en-US','en'], configurable: true
+  });
+  Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8, configurable: true});
+  Object.defineProperty(navigator, 'deviceMemory', {get: () => 8, configurable: true});
+  Object.defineProperty(navigator, 'platform', {get: () => 'MacIntel', configurable: true});
+  Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.', configurable: true});
+
+  // -- userAgentData: hide HeadlessChrome --
+  if (navigator.userAgentData) {
+    Object.defineProperty(navigator, 'userAgentData', {
+      get: () => ({
+        brands: [
+          {brand: 'Google Chrome', version: '132'},
+          {brand: 'Chromium', version: '132'},
+          {brand: 'Not=A?Brand', version: '99'}
+        ],
+        mobile: false,
+        platform: 'macOS',
+        getHighEntropyValues: async (hints) => {
+          const result = {
+            platform: 'macOS', platformVersion: '14.0.0',
+            architecture: 'arm', model: '',
+            uaFullVersion: '132.0.6834.160',
+            fullVersionList: [
+              {brand: 'Google Chrome', version: '132.0.6834.160'},
+              {brand: 'Chromium', version: '132.0.6834.160'},
+              {brand: 'Not=A?Brand', version: '99.0.0.0'}
+            ]
+          };
+          const filtered = {};
+          for (const h of hints) { if (result[h]) filtered[h] = result[h]; }
+          return filtered;
+        }
+      }),
+      configurable: true
+    });
+  }
+
+  // -- chrome object --
+  if (!window.chrome) {
+    Object.defineProperty(window, 'chrome', {
+      writable: true, enumerable: true, configurable: false, value: {}
+    });
+  }
+  window.chrome.runtime = {};
+  window.chrome.loadTimes = function() { return {}; };
+  window.chrome.csi = function() { return {}; };
+  window.chrome.app = { isInstalled: false };
+
+  // -- permissions --
+  const _origQuery = window.navigator.permissions.query;
+  window.navigator.permissions.query = (p) =>
+    p.name === 'notifications'
+      ? Promise.resolve({state: Notification.permission})
+      : _origQuery(p);
+
+  // -- Error.prototype.name lock --
+  Object.defineProperty(Error.prototype, 'name', {configurable: false, enumerable: false});
+
+  // -- Canvas fingerprint noise (2D) --
+  (function() {
+    const noise = (canvas) => {
+      try {
+        const ctx = canvas.getContext('2d');
+        if (!ctx || canvas.width < 16 || canvas.height < 16) return;
+        const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const n = Math.max(3, Math.floor(canvas.width * canvas.height / 1000));
+        for (let i = 0; i < n; i++) {
+          const px = Math.floor(Math.random() * canvas.width);
+          const py = Math.floor(Math.random() * canvas.height);
+          const idx = (py * canvas.width + px) * 4;
+          id.data[idx]   ^= 1;
+          id.data[idx+1] ^= 1;
+          id.data[idx+2] ^= 1;
+        }
+        ctx.putImageData(id, 0, 0);
+      } catch(e) {}
+    };
+    const _origTDU = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function() {
+      noise(this); return _origTDU.apply(this, arguments);
+    };
+    const _origTB = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function(cb) {
+      noise(this); return _origTB.call(this, cb, ...Array.prototype.slice.call(arguments, 1));
+    };
+    const _origGID = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = function(x,y,w,h) {
+      const r = _origGID.call(this, x, y, w, h);
+      if (w*h > 100) {
+        const n = Math.max(1, Math.floor(w*h/500));
+        for (let i=0; i<n; i++) {
+          const idx = Math.floor(Math.random() * r.data.length);
+          r.data[idx] ^= 1;
+        }
+      }
+      return r;
+    };
+  })();
+
+  // -- WebGL vendor/renderer spoof --
+  (function() {
+    const hook = (proto) => {
+      const _orig = proto.prototype.getParameter;
+      proto.prototype.getParameter = function(p) {
+        if (p === 37445) return 'Intel Inc.';
+        if (p === 37446) return 'Intel Iris OpenGL Engine';
+        return _orig.call(this, p);
+      };
+    };
+    if (typeof WebGLRenderingContext !== 'undefined') hook(WebGLRenderingContext);
+    if (typeof WebGL2RenderingContext !== 'undefined') hook(WebGL2RenderingContext);
+  })();
+})();
+"""
+
+# Fix for navigator.userAgentData version mismatch:
+# playwright-stealth replaces "HeadlessChrome" brand but keeps real version (139).
+# This script COMPLETELY replaces navigator.userAgentData with matching version 132.
+_UA_DATA_FIX_JS = r"""
+Object.defineProperty(navigator, 'userAgentData', {
+  get: function() {
+    return {
+      brands: [
+        {brand: 'Not=A?Brand', version: '99'},
+        {brand: 'Google Chrome', version: '132'},
+        {brand: 'Chromium', version: '132'}
+      ],
+      mobile: false,
+      platform: 'macOS',
+      getHighEntropyValues: function(hints) {
+        return Promise.resolve({
+          platform: 'macOS',
+          platformVersion: '14.0.0',
+          architecture: 'arm',
+          model: '',
+          uaFullVersion: '132.0.6834.160',
+          fullVersionList: [
+            {brand: 'Not=A?Brand', version: '99.0.0.0'},
+            {brand: 'Google Chrome', version: '132.0.6834.160'},
+            {brand: 'Chromium', version: '132.0.6834.160'}
+          ]
+        });
+_MANUAL_STEALTH_JS = r"""(function() {
+  // -- navigator properties --
+  Object.defineProperty(navigator, 'webdriver', {get: () => false, configurable: true});
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => [1,2,3,4,5], configurable: true
+  });
+  Object.defineProperty(navigator, 'languages', {
+    get: () => ['en-US','en'], configurable: true
+  });
+  Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8, configurable: true});
+  Object.defineProperty(navigator, 'deviceMemory', {get: () => 8, configurable: true});
+  Object.defineProperty(navigator, 'platform', {get: () => 'MacIntel', configurable: true});
+  Object.defineProperty(navigator, 'vendor', {get: () => 'Google Inc.', configurable: true});
+
+  // -- userAgentData: hide HeadlessChrome --
+  if (navigator.userAgentData) {
+    Object.defineProperty(navigator, 'userAgentData', {
+      get: () => ({
+        brands: [
+          {brand: 'Google Chrome', version: '132'},
+          {brand: 'Chromium', version: '132'},
+          {brand: 'Not=A?Brand', version: '99'}
+        ],
+        mobile: false,
+        platform: 'macOS',
+        getHighEntropyValues: async (hints) => {
+          const result = {
+            platform: 'macOS', platformVersion: '14.0.0',
+            architecture: 'arm', model: '',
+            uaFullVersion: '132.0.6834.160',
+            fullVersionList: [
+              {brand: 'Google Chrome', version: '132.0.6834.160'},
+              {brand: 'Chromium', version: '132.0.6834.160'},
+              {brand: 'Not=A?Brand', version: '99.0.0.0'}
+            ]
+          };
+          const filtered = {};
+          for (const h of hints) { if (result[h]) filtered[h] = result[h]; }
+          return filtered;
+        }
+      }),
+      configurable: true
+    });
+  }
+
+  // -- chrome object --
+  if (!window.chrome) {
+    Object.defineProperty(window, 'chrome', {
+      writable: true, enumerable: true, configurable: false, value: {}
+    });
+  }
+  window.chrome.runtime = {};
+  window.chrome.loadTimes = function() { return {}; };
+  window.chrome.csi = function() { return {}; };
+  window.chrome.app = { isInstalled: false };
+
+  // -- permissions --
+  const _origQuery = window.navigator.permissions.query;
+  window.navigator.permissions.query = (p) =>
+    p.name === 'notifications'
+      ? Promise.resolve({state: Notification.permission})
+      : _origQuery(p);
+
+  // -- Error.prototype.name lock --
+  Object.defineProperty(Error.prototype, 'name', {configurable: false, enumerable: false});
+
+  // -- Canvas fingerprint noise (2D) --
+  (function() {
+    const noise = (canvas) => {
+      try {
+        const ctx = canvas.getContext('2d');
+        if (!ctx || canvas.width < 16 || canvas.height < 16) return;
+        const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const n = Math.max(3, Math.floor(canvas.width * canvas.height / 1000));
+        for (let i = 0; i < n; i++) {
+          const px = Math.floor(Math.random() * canvas.width);
+          const py = Math.floor(Math.random() * canvas.height);
+          const idx = (py * canvas.width + px) * 4;
+          id.data[idx]   ^= 1;
+          id.data[idx+1] ^= 1;
+          id.data[idx+2] ^= 1;
+        }
+        ctx.putImageData(id, 0, 0);
+      } catch(e) {}
+    };
+    const _origTDU = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function() {
+      noise(this); return _origTDU.apply(this, arguments);
+    };
+    const _origTB = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function(cb) {
+      noise(this); return _origTB.call(this, cb, Array.prototype.slice.call(arguments, 1));
+    };
+    const _origGID = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = function(x,y,w,h) {
+      const r = _origGID.call(this, x, y, w, h);
+      if (w*h > 100) {
+        const n = Math.max(1, Math.floor(w*h/500));
+        for (let i=0; i<n; i++) {
+          const idx = Math.floor(Math.random() * r.data.length);
+          r.data[idx] ^= 1;
+        }
+      }
+      return r;
+    };
+  })();
+
+  // -- WebGL vendor/renderer spoof --
+  (function() {
+    const hook = (proto) => {
+      const _orig = proto.prototype.getParameter;
+      proto.prototype.getParameter = function(p) {
+        if (p === 37445) return 'Intel Inc.';
+        if (p === 37446) return 'Intel Iris OpenGL Engine';
+        return _orig.call(this, p);
+      };
+    };
+    if (typeof WebGLRenderingContext !== 'undefined') hook(WebGLRenderingContext);
+    if (typeof WebGL2RenderingContext !== 'undefined') hook(WebGL2RenderingContext);
+  })();
+})();
+"""
+
+# Fix for navigator.userAgentData version mismatch:
+# playwright-stealth replaces "HeadlessChrome" brand but keeps real version (139).
+# This script COMPLETELY replaces navigator.userAgentData with matching version 132.
+_UA_DATA_FIX_JS = r"""
+Object.defineProperty(navigator, 'userAgentData', {
+  get: function() {
+    return {
+      brands: [
+        {brand: 'Not=A?Brand', version: '99'},
+        {brand: 'Google Chrome', version: '132'},
+        {brand: 'Chromium', version: '132'}
+      ],
+      mobile: false,
+      platform: 'macOS',
+      getHighEntropyValues: function(hints) {
+        return Promise.resolve({
+          platform: 'macOS',
+          platformVersion: '14.0.0',
+          architecture: 'arm',
+          model: '',
+          uaFullVersion: '132.0.6834.160',
+          fullVersionList: [
+            {brand: 'Not=A?Brand', version: '99.0.0.0'},
+            {brand: 'Google Chrome', version: '132.0.6834.160'},
+            {brand: 'Chromium', version: '132.0.6834.160'}
+          ]
+        });
+      }
+    };
+  },
+  configurable: true,
+  enumerable: true
+});
+"""
+
+  // -- userAgentData: hide HeadlessChrome --
+  if (navigator.userAgentData) {
+    Object.defineProperty(navigator, 'userAgentData', {
+      get: () => ({
+        brands: [
+          {brand: 'Google Chrome', version: '132'},
+          {brand: 'Chromium', version: '132'},
+          {brand: 'Not=A?Brand', version: '99'}
+        ],
+        mobile: false,
+        platform: 'macOS',
+        getHighEntropyValues: async (hints) => {
+          const result = {
+            platform: 'macOS', platformVersion: '14.0.0',
+            architecture: 'arm', model: '',
+            uaFullVersion: '132.0.6834.160',
+            fullVersionList: [
+              {brand: 'Google Chrome', version: '132.0.6834.160'},
+              {brand: 'Chromium', version: '132.0.6834.160'},
+              {brand: 'Not=A?Brand', version: '99.0.0.0'}
+            ]
+          };
+          const filtered = {};
+          for (const h of hints) { if (result[h]) filtered[h] = result[h]; }
+          return filtered;
+        }
+      }),
+      configurable: true
+    });
+  }
+
+  // -- chrome object --
+  if (!window.chrome) {
+    Object.defineProperty(window, 'chrome', {
+      writable: true, enumerable: true, configurable: false, value: {}
+    });
+  }
+  window.chrome.runtime = {};
+  window.chrome.loadTimes = function() { return {}; };
+  window.chrome.csi = function() { return {}; };
+  window.chrome.app = { isInstalled: false };
+
+  // -- permissions --
+  const _origQuery = window.navigator.permissions.query;
+  window.navigator.permissions.query = (p) =>
+    p.name === 'notifications'
+      ? Promise.resolve({state: Notification.permission})
+      : _origQuery(p);
+
+  // -- Error.prototype.name lock --
+  Object.defineProperty(Error.prototype, 'name', {configurable: false, enumerable: false});
+
+  // -- Canvas fingerprint noise (2D) --
+  (function() {
+    const noise = (canvas) => {
+      try {
+        const ctx = canvas.getContext('2d');
+        if (!ctx || canvas.width < 16 || canvas.height < 16) return;
+        const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const n = Math.max(3, Math.floor(canvas.width * canvas.height / 1000));
+        for (let i = 0; i < n; i++) {
+          const px = Math.floor(Math.random() * canvas.width);
+          const py = Math.floor(Math.random() * canvas.height);
+          const idx = (py * canvas.width + px) * 4;
+          id.data[idx]   ^= 1;
+          id.data[idx+1] ^= 1;
+          id.data[idx+2] ^= 1;
+        }
+        ctx.putImageData(id, 0, 0);
+      } catch(e) {}
+    };
+    const _origTDU = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function() {
+      noise(this); return _origTDU.apply(this, arguments);
+    };
+    const _origTB = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function(cb) {
+      noise(this); return _origTB.call(this, cb, ...Array.prototype.slice.call(arguments, 1));
+    };
+    const _origGID = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = function(x,y,w,h) {
+      const r = _origGID.call(this, x, y, w, h);
+      if (w*h > 100) {
+        const n = Math.max(1, Math.floor(w*h/500));
+        for (let i=0; i<n; i++) {
+          const idx = Math.floor(Math.random() * r.data.length);
+          r.data[idx] ^= 1;
+        }
+      }
+      return r;
+    };
+  })();
+
+  // -- WebGL vendor/renderer spoof --
+  (function() {
+    const hook = (proto) => {
+      const _orig = proto.prototype.getParameter;
+      proto.prototype.getParameter = function(p) {
+        if (p === 37445) return 'Intel Inc.';
+        if (p === 37446) return 'Intel Iris OpenGL Engine';
+        return _orig.call(this, p);
+      };
+    };
+    if (typeof WebGLRenderingContext !== 'undefined') hook(WebGLRenderingContext);
+    if (typeof WebGL2RenderingContext !== 'undefined') hook(WebGL2RenderingContext);
+  })();
+})();
+"""
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        prog="cmd-headless",
+        description="One-command browser automation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    # Mode
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--local", action="store_true", help="Force local Playwright browser")
+    mode.add_argument("--cloud", action="store_true", help="Force Browser Use Cloud API")
+    mode.add_argument("--auto", action="store_true", default=True, help="Auto-detect (default)")
+
+    # CDP — connect to existing Chrome
+    p.add_argument(
+        "--cdp",
+        action="store_true",
+        help="Connect to existing Chrome via CDP (uses your real session — logged in!)",
+    )
+    p.add_argument(
+        "--cdp-port",
+        type=int,
+        default=9222,
+        help="Chrome remote debugging port (default: 9222)",
+    )
+
+    # Cookies
+    p.add_argument(
+        "--cookies", metavar="BROWSER", choices=["chrome", "brave", "firefox"],
+        help="Import cookies from installed browser before navigating",
+    )
+    p.add_argument("--domain", metavar="DOMAIN", help="Filter cookie import to specific domain")
+    p.add_argument("--import-only", action="store_true", help="Only import cookies, no navigation")
+
+    # Output
+    p.add_argument("--json", action="store_true", help="Output results as JSON")
+    p.add_argument("--screenshot", metavar="PATH", help="Save screenshot to file")
+    p.add_argument("--timeout", type=int, default=30, help="Timeout in seconds (default: 30)")
+    p.add_argument("--text", action="store_true", help="Output only page text (no URL/title header)")
+
+    # Info
+    p.add_argument("--version", action="store_true", help="Show version")
+    p.add_argument("--cost", action="store_true", help="Show cost estimate")
+    p.add_argument("--live", action="store_true", help="Show live session URL (cloud mode)")
+
+    # Stealth & Profile
+    p.add_argument("--no-stealth", action="store_true", help="Disable anti-detection evasions")
+    p.add_argument("--profile-dir", metavar="DIR", help="Save/restore browser profile (cookies, localStorage)")
+    p.add_argument("--sdk", action="store_true", help="Use browser-use-sdk for cloud tasks")
+
+    p.add_argument("prompt", nargs="*", help="Natural language prompt")
+
+    return p.parse_args()
+
+
+# ---------------------------------------------------------------------------
+# Cookie helpers
+# ---------------------------------------------------------------------------
+
+
+def extract_cookies(browser: str, domain: Optional[str] = None) -> Dict:
+    """Extract cookies from a real browser using browser_cookie3."""
+    try:
+        import browser_cookie3 as bc3
+    except ImportError:
+        return {"error": "browser_cookie3 not installed. pip install browser_cookie3"}
+
+    loader = {"chrome": bc3.chrome, "brave": bc3.brave, "firefox": bc3.firefox}.get(browser)
+    if not loader:
+        return {"error": f"Unknown browser: {browser}"}
+
+    try:
+        raw = loader()
+    except Exception as e:
+        return {"error": f"Failed to read {browser} cookies: {e}"}
+
+    now = time.time()
+    cookies: List[dict] = []
+    seen = set()
+    all_domains = set()
+
+    for c in raw:
+        try:
+            d = (getattr(c, "domain", "") or "").lstrip(".")
+            name = getattr(c, "name", "") or ""
+            value = getattr(c, "value", "") or ""
+            if not name or not d:
+                continue
+
+            if domain:
+                fd = domain.lower().lstrip(".")
+                if not (d == fd or d.endswith("." + fd)):
+                    continue
+
+            expires = getattr(c, "expires", None)
+            if expires is not None:
+                try:
+                    if isinstance(expires, (int, float)) and expires < now:
+                        continue
+                    if hasattr(expires, "timestamp") and expires.timestamp() < now:
+                        continue
+                except Exception:
+                    pass
+
+            key = f"{d}|{name}"
+            if key in seen:
+                continue
+            seen.add(key)
+            all_domains.add(d)
+
+            # Playwright-compatible cookie format
+            cookie = {
+                "name": name,
+                "value": value,
+                "domain": d,
+                "path": getattr(c, "path", "/") or "/",
+                "secure": bool(getattr(c, "secure", False)),
+            }
+            cookies.append(cookie)
+        except Exception:
+            continue
+
+    return {"cookies": cookies, "count": len(cookies), "domains": sorted(all_domains)}
+
+
+# ---------------------------------------------------------------------------
+# CDP — connect to existing Chrome
+# ---------------------------------------------------------------------------
+
+
+def _find_cdp_endpoint(port: int = 9222) -> Optional[str]:
+    """Find Chrome's CDP WebSocket URL."""
+    import urllib.request
+
+    try:
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=3)
+        data = json.loads(resp.read())
+        return data.get("webSocketDebuggerUrl")
+    except Exception:
+        return None
+
+
+def _launch_chrome_with_cdp(port: int = 9222) -> bool:
+    """Try to launch Chrome with remote debugging enabled."""
+    import subprocess
+
+    chrome_paths = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    ]
+    for cp in chrome_paths:
+        if os.path.exists(cp):
+            subprocess.Popen(
+                [
+                    cp,
+                    f"--remote-debugging-port={port}",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            time.sleep(2)
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Local browse (Playwright)
+# ---------------------------------------------------------------------------
+
+
+async def _browse_local(
+    url: str,
+    cookies: Optional[List[dict]] = None,
+    screenshot: Optional[str] = None,
+    timeout: int = 30,
+    use_cdp: bool = False,
+    cdp_port: int = 9222,
+    stealth: bool = True,
+    profile_dir: Optional[str] = None,
+) -> Dict:
+    """Browse a URL using Playwright (local), optionally via CDP to existing Chrome."""
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return {"error": "Playwright not installed. Run: pip install playwright && playwright install chromium"}
+
+    # Stealth Chrome flags
+    STEALTH_ARGS = [
+        "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-features=IsolateOrigins,site-per-process",
+        "--disable-gpu", "--disable-extensions", "--disable-background-networking",
+        "--disable-default-apps", "--disable-sync", "--no-first-run",
+    ]
+    if stealth:
+        STEALTH_ARGS.extend([
+            "--disable-infobars", "--disable-breakpad",
+            "--disable-component-extensions-with-background-pages",
+            "--disable-client-side-phishing-detection",
+            "--disable-component-update", "--disable-ipc-flooding-protection",
+            "--disable-hang-monitor", "--disable-prompt-on-repost",
+            "--metrics-recording-only",
+            "--enable-features=NetworkService,NetworkServiceInProcess",
+            "--password-store=basic", "--use-mock-keychain",
+            "--disable-features=UserAgentClientHint",  # Block Sec-CH-UA leak
+        ])
+
+    async with async_playwright() as p:
+        headless = os.environ.get("BH_HEADLESS", "true").lower() != "false"
+
+        if use_cdp:
+            cdp_url = _find_cdp_endpoint(cdp_port)
+            if not cdp_url:
+                if _launch_chrome_with_cdp(cdp_port):
+                    import time
+                    time.sleep(2)
+                    cdp_url = _find_cdp_endpoint(cdp_port)
+            if not cdp_url:
+                return {"error": f"No Chrome CDP on port {cdp_port}"}
+            try:
+                browser = await p.chromium.connect_over_cdp(cdp_url, timeout=10000)
+            except Exception as e:
+                return {"error": f"CDP connection failed: {e}"}
+            contexts = browser.contexts
+            if contexts:
+                context = contexts[0]
+            else:
+                context = await browser.new_context()
+        else:
+            # Fresh browser with stealth
+            browser = await p.chromium.launch(
+                headless=headless,
+                args=STEALTH_ARGS,
+            )
+
+            # Context with profile persistence
+            context_kwargs: dict = {
+                "viewport": {"width": 1280, "height": 720},
+                "user_agent": USER_AGENT,
+            }
+            if profile_dir:
+                os.makedirs(profile_dir, exist_ok=True)
+                state_file = os.path.join(profile_dir, "state.json")
+                if os.path.exists(state_file):
+                    print(f"[cmd-headless] Loading profile: {profile_dir}", file=sys.stderr)
+                    context_kwargs["storage_state"] = state_file
+
+            context = await browser.new_context(**context_kwargs)
+
+            # Override Sec-CH-UA at HTTP level
+            await context.set_extra_http_headers({
+                'sec-ch-ua': '"Google Chrome";v="132", "Chromium";v="132", "Not=A?Brand";v="99"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"macOS"',
+            })
+
+            # Apply playwright-stealth evasions
+            if stealth:
+                await _apply_stealth(context)
+
+        # Import cookies
+        if cookies:
+            clean = [
+                {k: v for k, v in c.items()
+                 if k in ("name", "value", "domain", "path", "secure", "httpOnly", "sameSite")}
+                for c in cookies
+            ]
+            await context.add_cookies(clean)
+
+        page = await context.new_page()
+
+        try:
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+            status = response.status if response else 0
+        except Exception as e:
+            return {"error": f"Navigation failed: {e}", "url": url}
+
+        import asyncio
+        await asyncio.sleep(1)
+
+        title = await page.title()
+        try:
+            text = await page.evaluate("() => document.body?.innerText || ''")
+        except Exception:
+            text = ""
+
+        result = {
+            "url": page.url,
+            "title": title,
+            "status": status,
+            "text": text[:10000],
+            "text_length": len(text),
+        }
+
+        if screenshot:
+            await page.screenshot(path=screenshot, full_page=True)
+            result["screenshot"] = screenshot
+
+        # Save profile if requested
+        if profile_dir and not use_cdp:
+            state_path = os.path.join(profile_dir, "state.json")
+            await context.storage_state(path=state_path)
+            result["profile_saved"] = state_path
+
+        if not use_cdp:
+            await browser.close()
+
+        return result
+
+
+async def _apply_stealth(context) -> bool:
+    """Apply playwright-stealth anti-detection evasions to a context."""
+    try:
+        from playwright_stealth import Stealth
+        stealth_obj = Stealth(
+            navigator_platform_override='MacIntel',  # macOS M1/M2 reports MacIntel
+            navigator_languages_override=('en-US', 'en'),
+            webgl_vendor_override='Intel Inc.',
+            webgl_renderer_override='Intel Iris OpenGL Engine',
+            chrome_runtime=False,  # Disable chrome.runtime — causes false positives
+            hairline=False,  # Disable hairline — not needed
+            iframe_content_window=False,  # Disable — can break some sites
+        )
+        await stealth_obj.apply_stealth_async(context)
+
+        # EXTRA FIX: Completely override navigator.userAgentData to fix version mismatch
+        # playwright-stealth only replaces "HeadlessChrome" brand name but keeps real
+        # version 139 — we need to override the entire object with matching version 132
+        await context.add_init_script(
+            _UA_DATA_FIX_JS  # noqa: F821 — defined at module top
+        )
+
+        print("[cmd-headless] 🥷 Stealth evasions applied (playwright-stealth + ua-data fix)", file=sys.stderr)
+        return True
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"[cmd-headless] Stealth library error: {e}, using manual", file=sys.stderr)
+
+    # Manual fallback: comprehensive anti-detection
+    try:
+        await context.add_init_script(
+            _MANUAL_STEALTH_JS  # noqa: F821 — defined below
+        )
+        print("[cmd-headless] 🥷 Manual stealth evasions applied", file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"[cmd-headless] Stealth failed: {e}", file=sys.stderr)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Cloud browse (Browser Use API)
+# ---------------------------------------------------------------------------
+
+
+def _browse_cloud(prompt: str, api_key: str, timeout: int = 30) -> Dict:
+    """Run a task via Browser Use Cloud API."""
+    import httpx
+
+    base = "https://api.browser-use.com/api/v3"
+
+    try:
+        resp = httpx.post(
+            f"{base}/sessions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        session = resp.json()
+        session_id = session.get("id", "")
+    except Exception as e:
+        return {"error": f"Cloud session creation failed: {e}"}
+
+    try:
+        resp = httpx.post(
+            f"{base}/sessions/{session_id}/tasks",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"task": prompt, "model": "bu-max"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+
+        for _ in range(timeout * 2):
+            time.sleep(0.5)
+            resp = httpx.get(
+                f"{base}/sessions/{session_id}",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            data = resp.json()
+            state = data.get("status", data.get("state", ""))
+
+            if state in ("completed", "finished", "done", "idle", "stopped"):
+                return {
+                    "session_id": session_id,
+                    "status": state,
+                    "result": data.get("result", data.get("output", "")),
+                    "live_url": f"https://cloud.browser-use.com/sessions/{session_id}",
+                }
+            elif state in ("failed", "error"):
+                return {"error": "Cloud task failed", "session_id": session_id, "status": state}
+
+        return {"error": "Timeout waiting for cloud task", "session_id": session_id}
+    except Exception as e:
+        return {"error": f"Cloud task failed: {e}", "session_id": session_id}
+
+
+# ---------------------------------------------------------------------------
+# URL extraction from prompt
+# ---------------------------------------------------------------------------
+
+
+def _extract_url(prompt: str) -> Optional[str]:
+    """Extract a URL from a natural language prompt."""
+    m = re.search(r"https?://[^\s]+", prompt)
+    if m:
+        return m.group(0)
+    m = re.search(
+        r"(?:go|navigate|open|browse|visit)\s+(?:to\s+)?"
+        r"([a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?(?:/[^\s]*)?)",
+        prompt,
+    )
+    if m:
+        return f"https://{m.group(1).rstrip('.')}"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main():
+    args = parse_args()
+
+    if args.version:
+        print("cmd-headless v1.2.0 (sota-browser)")
+        print("Modes: --local (Playwright) | --cloud (Browser Use API) | --cdp (existing Chrome)")
+        print("Cookies: --cookies chrome|brave|firefox [--domain DOMAIN]")
+        print("Stealth: 🥷 playwright-stealth anti-detection (--no-stealth to disable)")
+        print("Profile: --profile-dir DIR (persist cookies/localStorage across runs)")
+        print("SDK: --sdk (use browser-use-sdk for cloud)")
+        return
+
+    api_key = os.environ.get("BROWSER_USE_API_KEY", "")
+    use_cloud = args.cloud or (args.auto and bool(api_key) and not args.local)
+    if args.local:
+        use_cloud = False
+    if args.cdp:
+        use_cloud = False  # CDP always uses local Chrome
+
+    if args.cost:
+        if use_cloud:
+            print("Cloud mode: ~$0.08-0.10 per session (Browser Use Cloud API)")
+        else:
+            print("Local mode: FREE (Playwright on your machine)")
+        return
+
+    # ── Cookie import ─────────────────────────────────────────────────
+    cookies: Optional[List[dict]] = None
+    if args.cookies:
+        print(f"[cmd-headless] Extracting cookies from {args.cookies}...", file=sys.stderr)
+        result = extract_cookies(args.cookies, args.domain)
+        if "error" in result:
+            print(f"Error: {result['error']}", file=sys.stderr)
+            sys.exit(1)
+
+        cookies = result["cookies"]
+        d_info = f" for {args.domain}" if args.domain else ""
+        print(
+            f"[cmd-headless] ✓ {result['count']} cookies from {args.cookies}"
+            f"{d_info} across {len(result['domains'])} domains",
+            file=sys.stderr,
+        )
+
+        if args.import_only:
+            output = {"count": result["count"], "domains": result["domains"],
+                      "cookies": [{"name": c["name"], "domain": c["domain"]} for c in cookies[:30]]}
+            print(json.dumps(output, indent=2))
+            return
+
+    # ── Prompt handling ────────────────────────────────────────────────
+    prompt = " ".join(args.prompt).strip() if args.prompt else ""
+    if not prompt:
+        print("Error: No prompt. Usage: cmd-headless 'your prompt'", file=sys.stderr)
+        sys.exit(1)
+
+    # ── Execute ────────────────────────────────────────────────────────
+    if use_cloud:
+        print(f"[cmd-headless] Cloud mode — running task...", file=sys.stderr)
+        result = _browse_cloud(prompt, api_key, timeout=args.timeout)
+        if args.live and "live_url" in result:
+            print(f"Live: {result['live_url']}")
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            if "error" in result:
+                print(f"Error: {result['error']}")
+            else:
+                print(f"Status: {result.get('status', 'unknown')}")
+                output = result.get("result", "")
+                print(output[:3000] if isinstance(output, str) else json.dumps(output, indent=2)[:3000])
+        return
+
+    # Local / CDP mode
+    url = _extract_url(prompt)
+    if not url:
+        print("Error: No URL found in prompt.", file=sys.stderr)
+        print("Try: cmd-headless 'go to https://example.com'", file=sys.stderr)
+        sys.exit(1)
+
+    mode = "CDP (existing Chrome)" if args.cdp else "local Playwright"
+    print(f"[cmd-headless] {mode} — {url}", file=sys.stderr)
+
+    result = asyncio.run(_browse_local(
+        url,
+        cookies=cookies,
+        screenshot=args.screenshot,
+        timeout=args.timeout,
+        use_cdp=args.cdp,
+        cdp_port=args.cdp_port,
+        stealth=not args.no_stealth,
+        profile_dir=args.profile_dir,
+    ))
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif args.text:
+        print(result.get("text", ""))
+    else:
+        if "error" in result:
+            print(f"Error: {result['error']}")
+        else:
+            print(f"URL:    {result.get('url', '')}")
+            print(f"Title:  {result.get('title', '')}")
+            print(f"Status: {result.get('status', 0)}")
+            if args.screenshot:
+                print(f"📸 Screenshot: {args.screenshot}")
+            text = result.get("text", "")
+            if text:
+                print(f"\n--- Content ({result.get('text_length', 0)} chars) ---")
+                print(text[:5000])
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,10 @@
+playwright>=1.40.0
+httpx>=0.25.0
+
+[all]
+browser_cookie3>=0.19.0
+scrapling>=0.5.0
+uvicorn[standard]
+
+[cookies]
+browser_cookie3>=0.19.0
