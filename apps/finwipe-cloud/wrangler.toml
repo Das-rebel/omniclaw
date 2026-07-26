@@ -1,0 +1,22 @@
+name = "finwipe-cloud"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Workers free tier: 100K requests/day, 10ms CPU time per request
+# KV free tier: 1M reads/day, 1K writes/day, 1GB storage
+
+[vars]
+ENVIRONMENT = "production"
+
+# Dev configuration (no KV id yet - will be added after creation)
+[env.dev]
+name = "finwipe-cloud-dev"
+
+# Production - KV namespace id will be inserted here after running:
+# npx wrangler kv namespace create finwipe_kv --env production
+# Then update the id below
+[env.production]
+name = "finwipe-cloud"
+kv_namespaces = [
+  { binding = "FINWIPE_KV", id = "PENDING_CREATE" }
+]
