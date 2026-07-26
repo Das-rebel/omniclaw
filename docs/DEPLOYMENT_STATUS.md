@@ -56,7 +56,7 @@
 
 ### 6. serve-vault-search Deployed (May 12)
 **Revision:** `serve-vault-search-00004-bjh`
-**URL:** https://serve-vault-search-338789220059.asia-south1.run.app
+**URL:** http://159.65.10.49:8080
 **Changes:**
 - vlTags crash fixed
 - Twitter tweets included in keyword search
@@ -105,7 +105,7 @@
 
 | Service | Revision | URL | Status |
 |---------|----------|-----|--------|
-| **serve-vault-search** | 00004-bjh | https://serve-vault-search-338789220059.asia-south1.run.app | ✅ ACTIVE |
+| **serve-vault-search** | 00004-bjh | http://159.65.10.49:8080 | ✅ ACTIVE |
 | **dasomni-bot** | (prev) | https://dasomni-bot-338789220059.asia-south1.run.app | ✅ ACTIVE |
 | **vault-control** | (prev) | https://omniclaw-vault-control-338789220059.us-central1.run.app | ✅ ACTIVE |
 
@@ -236,13 +236,13 @@ Twitter tweets use **text embeddings** (CLIP encodes the tweet text directly), n
 
 ```bash
 # Test vault search
-curl "https://serve-vault-search-338789220059.asia-south1.run.app/search?q=machine%20learning&limit=5"
+curl "http://159.65.10.49:8080/search?q=machine%20learning&limit=5"
 
 # Test semantic search
-curl "https://serve-vault-search-338789220059.asia-south1.run.app/search?q=drone&mode=semantic&limit=5"
+curl "http://159.65.10.49:8080/search?q=drone&mode=semantic&limit=5"
 
 # Check FAISS health
-curl "https://serve-vault-search-338789220059.asia-south1.run.app/health"
+curl "http://159.65.10.49:8080/health"
 
 # Test Twitter sync
 curl -X POST "https://twitter-sync-o36e7noe5a-el.a.run.app/" -H "Content-Type: application/json" -d '{"send_summary": true}'

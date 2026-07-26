@@ -11,8 +11,20 @@
 class ModelRouter {
   constructor(options = {}) {
     this.models = options.models || {
-      primary: 'gemini-2.5-flash',
-      fallback: ['glm-4.7', 'claude-3.5-sonnet']
+      // FASTEST > FREE: Groq llama-3.3-70b (~168ms, FREE) is primary.
+      // Groq API uses model IDs directly (no provider prefix).
+      // OpenRouter models need 'openrouter/' prefix.
+      primary: 'llama-3.3-70b-versatile',
+      fallback: [
+        'llama-3.1-8b-instant',        // Groq free, ~150ms, fastest
+        'qwen/qwen3-32b',              // Groq free, Chinese/multilingual
+        'qwen/qwen3.6-27b',            // Groq free, larger Chinese
+        'open-mistral-nemo',            // Mistral free, backup
+        'gemini-2.5-flash',            // Gemini free, multimodal
+        'openrouter/nvidia/nemotron-3-super-120b-a12b:free',  // OpenRouter 1M ctx ONLY
+        'openrouter/google/gemma-4-31b-it:free',               // OpenRouter Gemma
+        'openrouter/openai/gpt-oss-120b:free',                // OpenRouter GPT-OSS
+      ]
     };
 
     this.resetTimeoutMs = options.resetTimeoutMs || 60000;

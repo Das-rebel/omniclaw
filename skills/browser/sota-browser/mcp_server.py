@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """
-SOTA Browser MCP Server — Entry Point (v1.3.0)
+SOTA Browser MCP Server — Entry Point (v1.7.0)
 
 Thin JSON-RPC stdio loop that delegates to modular tools + middleware.
 Drop-in compatible with the previous monolithic mcp_server.py.
+
+Stealth Browsers (v1.7.0):
+- CloakBrowser: 71 C++ patches (canvas, WebGL, audio, fonts, GPU, WebRTC)
+- Botright: Enhanced stealth + built-in free CAPTCHA solving
+- Proxy rotation: ProxyPool for automatic proxy management
+
+Local CAPTCHA Solver (v1.5.0):
+- Tools: captcha_solve_turnstile, captcha_solve_recaptcha_v2, captcha_check_status
 """
 
 import asyncio

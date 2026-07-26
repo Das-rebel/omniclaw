@@ -104,11 +104,54 @@ def simple_tokenize(text: str) -> List[str]:
 # BM25 Index Build
 # ------------------------------------------------------------------
 
+def _safe_str(val) -> str:
+    """Safely convert any value to string for indexing."""
+    if val is None:
+        return ''
+    if isinstance(val, str):
+        return val
+    if isinstance(val, (int, float, bool)):
+        return str(val)
+    if isinstance(val, list):
+        return ' '.join(_safe_str(x) for x in val[:10])
+    if isinstance(val, dict):
+        # For dicts, extract name or first few values
+        if 'name' in val:
+            return str(val['name'])
+        return ' '.join(str(v) for v in list(val.values())[:5])
+    return str(val)
+
+
+def _meta_to_text(meta: dict) -> str:
+    """Extract searchable text from metadata dict."""
+    if not meta:
+        return ''
+    parts = []
+    for key in ['vlSubject', 'topic', 'colabSummary', 'narrative', 'vlMood', 'location', 'sentiment']:
+        val = meta.get(key)
+        if val:
+            parts.append(_safe_str(val))
+    for key in ['vlTags', 'hashtags', 'topics', 'categories']:
+        val = meta.get(key)
+        if val:
+            parts.append(_safe_str(val))
+    entities = meta.get('entities')
+    if entities:
+        parts.append(_safe_str(entities))
+    return ' '.join(parts)
+
+
 def build_bm25_index(nodes: List[Dict]) -> tuple:
     doc_tokens_list: List[List[str]] = []
     doc_freqs: Dict[str, int] = {}
     for node in nodes:
-        text = f"{node.get('name', '')} {node.get('content', '')}"
+        # Build searchable text from multiple fields
+        meta = node.get('metadata', {}) or {}
+        text = ' '.join(filter(None, [
+            node.get('name', ''),
+            node.get('content', ''),
+            _meta_to_text(meta),
+        ]))
         tokens = simple_tokenize(text)
         doc_tokens_list.append(tokens)
         for t in set(tokens):
@@ -277,17 +320,97 @@ def search_endpoint():
         build_index()
     q = request.args.get('q', '').strip()
     limit = min(int(request.args.get('limit', 10)), MAX_RESULTS)
+    offset = int(request.args.get('offset', 0))
     search_type = request.args.get('type', None)
     if not q:
         return jsonify({'error': 'empty_query', 'results': [], 'count': 0})
     if not nodes_cache:
         return jsonify({'error': 'db_not_found', 'results': [], 'count': 0})
     try:
-        results = search_bm25(q, limit, search_type)
-        return jsonify({'query': q, 'results': results, 'count': len(results)})
+        # First pass: get enough results starting from offset
+        all_results = search_bm25(q, MAX_RESULTS + offset, search_type)
+        results = all_results[offset:offset + limit]
+        return jsonify({
+            'query': q, 'results': results, 'count': len(results),
+            'offset': offset, 'limit': limit,
+            'total_matched': len(all_results),
+            'has_more': offset + limit < len(all_results)
+        })
     except Exception as e:
         print(f'[Vault] Search error: {e}')
         return jsonify({'error': str(e), 'results': [], 'count': 0})
+
+
+@app.route('/export')
+def export_endpoint():
+    """Export all nodes with pagination — no search/ranking overhead.
+    
+    Query params:
+      offset: starting position (default 0)
+      limit: batch size (default 100, max 500)
+      type: filter by node type (optional)
+    
+    Returns all nodes from vault.db for full coverage sync.
+    """
+    if not nodes_cache:
+        return jsonify({'error': 'db_not_found', 'nodes': [], 'count': 0})
+    
+    offset = int(request.args.get('offset', 0))
+    limit = min(int(request.args.get('limit', 100)), 500)
+    export_type = request.args.get('type', None)
+    
+    # Filter by type if specified
+    filtered = nodes_cache
+    if export_type:
+        filtered = [n for n in nodes_cache if n.get('type') == export_type]
+    
+    total = len(filtered)
+    batch = filtered[offset:offset + limit]
+    
+    # Format nodes for export (same structure as search results)
+    results = []
+    for node in batch:
+        meta = node.get('metadata', {}) or {}
+        content = node.get('content', '') or ''
+        topic = meta.get('topic', '') or extract_topic_from_content(content)
+        results.append({
+            'id': node['id'],
+            'type': node['type'],
+            'name': node['name'] or '',
+            'content': content,
+            'url': node['url'] or '',
+            'timestamp': node['timestamp'] or '',
+            'score': 1.0,  # dummy score for consistency
+            'topic': topic,
+            'hashtags': ((meta.get('hashtags') or extract_hashtags_from_content(content) or [e.get('name','') for e in (meta.get('entities') or []) if isinstance(e,dict) and e.get('type')=='hashtag'] or meta.get('vlTags')) or [])[:10],
+            'entities': ((meta.get('entities') or extract_entities_from_content(content)) or [])[:5],
+            'metadata': {
+                'topic': topic,
+                'tags': ((meta.get('hashtags') or extract_hashtags_from_content(content) or [e.get('name','') for e in (meta.get('entities') or []) if isinstance(e,dict) and e.get('type')=='hashtag'] or meta.get('vlTags')) or [])[:10],
+                'vlTags': (meta.get('vlTags') or [])[:10],
+                'vlSubject': (meta.get('vlSubject') or '')[:200],
+                'mood': meta.get('vlMood', ''),
+                'narrative': (meta.get('narrative') or '')[:500],
+                'location': meta.get('location', ''),
+                'sentiment': meta.get('sentiment', ''),
+                'categories': (meta.get('categories') or [])[:5],
+                'topics': (meta.get('topics') or [])[:5],
+            }
+        })
+    
+    return jsonify({
+        'nodes': results,
+        'count': len(results),
+        'offset': offset,
+        'limit': limit,
+        'total': total,
+        'has_more': offset + limit < total,
+        'types': {
+            'twitter_tweet': sum(1 for n in nodes_cache if n.get('type') == 'twitter_tweet'),
+            'instagram_post': sum(1 for n in nodes_cache if n.get('type') == 'instagram_post'),
+            'other': sum(1 for n in nodes_cache if n.get('type') not in ('twitter_tweet', 'instagram_post')),
+        }
+    })
 
 @app.route('/reload')
 def reload():

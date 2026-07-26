@@ -11,7 +11,7 @@ const { getSecret } = require('../shared/security/secrets');
 
 class TavilyClient {
   constructor() {
-    this.baseUrl = 'api.tavily.com';
+    this.baseUrl = 'https://api.tavily.com';
     this.validator = createValidator('Tavily');
     this.apiKey = null;
     this.initialized = false;

@@ -39,10 +39,18 @@ logger = logging.getLogger("sota-browser.manager")
 class BrowserManager:
     """Manages Playwright browser instances, sessions, tabs, and all page operations."""
 
-    def __init__(self):
+    def __init__(self, nopecha_extension: str = None, extension_id: str = None,
+                 use_botright: bool = False, use_cloakbrowser: bool = False,
+                 proxy: str = None, geoip: bool = False):
         self._playwright = None
         self._browser = None
+        self._botright_client = None  # Botright client instance
+        self._cloakbrowser = None  # CloakBrowser instance
         self._using_existing = False
+        self._using_botright = use_botright  # Track if using Botright
+        self._using_cloakbrowser = use_cloakbrowser  # Track if using CloakBrowser
+        self._proxy = proxy  # Proxy for rotation
+        self._geoip = geoip  # Auto-match timezone/locale to proxy IP
         self.sessions: Dict[str, dict] = {}
         self.contexts: Dict[str, Any] = {}
         self.pages: Dict[str, dict] = {}
@@ -52,6 +60,9 @@ class BrowserManager:
         self._network_logs: Dict[str, list] = {}
         self._downloads: Dict[str, dict] = {}
         self._mocked_routes: Dict[str, list] = {}
+        # Extension support
+        self._nopecha_extension = nopecha_extension
+        self._nopecha_extension_id = extension_id
 
     # ------------------------------------------------------------------
     # Browser lifecycle
@@ -80,9 +91,22 @@ class BrowserManager:
             await self._launch_browser()
 
     async def _launch_browser(self) -> None:
+        # Try CloakBrowser first (highest stealth, C++ patches)
+        if getattr(self, '_using_cloakbrowser', False):
+            await self._launch_cloakbrowser()
+            return
+        # Try Botright if enabled (enhanced stealth + CAPTCHA solving)
+        if getattr(self, '_using_botright', False):
+            await self._launch_botright_browser()
+            return
+        await self._launch_vanilla_browser()
+
+    async def _launch_vanilla_browser(self) -> None:
+        """Launch vanilla Playwright browser (fallback or explicit)."""
         sock_path = f"/tmp/sota-b-{os.getpid()}.sock"
         headless = os.environ.get("BH_HEADLESS", "true").lower() != "false"
         stealth = os.environ.get("BH_STEALTH", "true").lower() != "false"
+        nopecha_ext = getattr(self, '_nopecha_extension', None)
 
         # Base args
         args = [
@@ -93,12 +117,20 @@ class BrowserManager:
             "--disable-features=IsolateOrigins,site-per-process",
             f"--devtools-file-based-cdp-socket-name={sock_path}",
             "--disable-gpu",
-            "--disable-extensions",
             "--disable-background-networking",
             "--disable-default-apps",
             "--disable-sync",
             "--no-first-run",
         ]
+
+
+        # Extension loading (Nopecha or others)
+        if nopecha_ext:
+            args.append(f"--load-extension={nopecha_ext}")
+            args.append("--disable-extensions")  # Still disable OTHER extensions
+            print(f"[sota-browser] Loading extension: {nopecha_ext}", file=sys.stderr)
+        else:
+            args.append("--disable-extensions")
 
         # Full stealth args (from browser-use @ 96K stars)
         if stealth:
@@ -123,7 +155,105 @@ class BrowserManager:
         )
         self._using_existing = False
         self._stealth_enabled = stealth
-        print(f"[sota-browser] Browser ready (fresh launch, stealth={'on' if stealth else 'off'})", file=sys.stderr)
+        ext_note = f" | extension={nopecha_ext}" if nopecha_ext else ""
+        print(f"[sota-browser] Browser ready (fresh launch, stealth={'on' if stealth else 'off'}{ext_note})", file=sys.stderr)
+
+    async def _launch_botright_browser(self) -> None:
+        """
+        Launch Botright instead of vanilla Playwright for enhanced stealth.
+
+        Botright provides:
+        - Drop-in Playwright replacement
+        - Built-in CAPTCHA solving (reCaptcha, hCaptcha, GeeTest)
+        - Real Chromium browser for best stealth
+        - Fake fingerprint generation via chrome-fingerprints
+        - Proxy support built-in
+        """
+        try:
+            import botright
+        except ImportError:
+            print("[sota-browser] Botright not installed. Install with:", file=sys.stderr)
+            print("  pip install botright && playwright install", file=sys.stderr)
+            print("[sota-browser] Falling back to vanilla Playwright", file=sys.stderr)
+            self._using_botright = False
+            await self._launch_vanilla_browser()
+            return
+
+        headless = os.environ.get("BH_HEADLESS", "true").lower() != "false"
+        proxy = os.environ.get("BH_PROXY", None)  # Optional proxy support
+
+        try:
+            # Initialize Botright session
+            self._botright_client = await botright.Botright(
+                headless=headless,
+                spoof_canvas=True,
+                mask_fingerprint=False,  # Use fake fingerprints
+            )
+
+            # Create browser with optional proxy
+            browser_kwargs = {}
+            if proxy:
+                browser_kwargs['proxy'] = proxy
+
+            self._browser = await self._botright_client.new_browser(**browser_kwargs)
+            self._using_botright = True
+
+            print(f"[sota-browser] Botright browser ready (stealth=on, headless={headless})", file=sys.stderr)
+            if proxy:
+                print(f"[sota-browser] Using proxy: {proxy[:30]}...", file=sys.stderr)
+
+        except Exception as e:
+            print(f"[sota-browser] Botright launch failed: {e}", file=sys.stderr)
+            print("[sota-browser] Falling back to vanilla Playwright", file=sys.stderr)
+            self._using_botright = False
+            await self._launch_vanilla_browser()
+
+    async def _launch_cloakbrowser(self) -> None:
+        """
+        Launch CloakBrowser for maximum stealth via C++-level fingerprint patches.
+
+        CloakBrowser provides 71 source-level patches for:
+        - Canvas, WebGL, audio, fonts, GPU, screen
+        - WebRTC, network timing, automation signals
+        - CDP input behavior (humanize=True)
+        """
+        try:
+            from cloakbrowser import launch as cloak_launch
+        except ImportError:
+            print("[sota-browser] CloakBrowser not installed. Install with:", file=sys.stderr)
+            print("  pip install cloakbrowser", file=sys.stderr)
+            print("[sota-browser] Falling back to vanilla Playwright", file=sys.stderr)
+            self._using_cloakbrowser = False
+            await self._launch_vanilla_browser()
+            return
+
+        proxy = self._proxy or os.environ.get("BH_PROXY")
+        geoip = self._geoip or os.environ.get("BH_GEOIP", "false").lower() == "true"
+        headless = os.environ.get("BH_HEADLESS", "true").lower() != "false"
+        humanize = os.environ.get("BH_HUMANIZE", "true").lower() != "false"
+
+        license_key = os.environ.get("CLOAKBROWSER_LICENSE_KEY") or os.environ.get("CLOAKBROWSER_KEY")
+        try:
+            kwargs = {
+                "headless": headless,
+                "humanize": humanize,
+            }
+            if proxy:
+                kwargs["proxy"] = proxy
+            if geoip:
+                kwargs["geoip"] = geoip
+            if license_key:
+                kwargs["license_key"] = license_key
+            self._browser = await asyncio.to_thread(cloak_launch, **kwargs)
+            self._using_cloakbrowser = True
+            print(f"[sota-browser] CloakBrowser ready (stealth=71-patches, headless={headless}, humanize={humanize})", file=sys.stderr)
+            if proxy:
+                print(f"[sota-browser] Using proxy: {proxy[:40]}...", file=sys.stderr)
+        except Exception as e:
+            print(f"[sota-browser] CloakBrowser launch failed: {e}", file=sys.stderr)
+            print("[sota-browser] Falling back to vanilla Playwright", file=sys.stderr)
+            self._using_cloakbrowser = False
+            await self._launch_vanilla_browser()
 
     async def shutdown(self) -> None:
         # Save persistent profiles before shutting down
@@ -150,6 +280,18 @@ class BrowserManager:
         if self._browser:
             try:
                 await self._browser.close()
+            except Exception:
+                pass
+        # Close Botright client if using it
+        if getattr(self, '_botright_client', None):
+            try:
+                await self._botright_client.close()
+            except Exception:
+                pass
+        # Close CloakBrowser if using it
+        if getattr(self, '_cloakbrowser', None):
+            try:
+                await self._cloakbrowser.close()
             except Exception:
                 pass
         if self._playwright:

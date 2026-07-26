@@ -12,7 +12,7 @@ const { createValidator } = require('./response_validator');
 class TwitterClient {
   constructor(bearerToken, aiConfig = {}) {
     this.bearerToken = bearerToken;
-    this.baseUrl = 'api.twitter.com';
+    this.baseUrl = 'https://api.twitter.com';
     this.enabled = !!bearerToken;
 
     // AI fallback configuration

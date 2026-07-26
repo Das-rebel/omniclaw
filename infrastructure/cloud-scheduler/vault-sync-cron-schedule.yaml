@@ -1,0 +1,127 @@
+# Cloud Scheduler Configuration for Vault Sync
+# SINGLE SYNC mode - Only one sync per day to avoid blocking
+
+apiVersion: scheduling.cloud.google.com/v1alpha1
+kind: CronJob
+metadata:
+  name: vault-sync-single-daily
+  namespace: default
+spec:
+  schedule: "0 1 * * *"  # Once per day at 1 AM IST (avoiding peak hours)
+  timeZone: "Asia/Kolkata"
+  timeZoneDisplayName: "Indian Standard Time"
+  job:
+    # Trigger Cloud Run service
+    httpTarget:
+      httpMethod: POST
+      uri: "https://vault-sync-single-job-[PROJECT_ID].a.run.app/run"
+      headers:
+        Content-Type: "application/json"
+        Authorization: "Bearer $(gcloud auth print-access-token)"
+      body:
+        syncType: "single"
+        includeTwitter: true
+        includeInstagram: true
+        processingMode: "single_processing"
+    retryConfig:
+      retryCount: 1  # Single retry only to avoid multiple failures
+      maxDoubling: 8
+      minBackoff: "30s"
+      maxBackoff: "300s"
+
+---
+# Cloud Run service configuration for SINGLE sync job
+apiVersion: serving.k8s.io/v1
+kind: Service
+metadata:
+  name: vault-sync-single-job
+  namespace: vault-sync
+spec:
+  template:
+    spec:
+      containers:
+      - image: us-central1-docker.pkg.dev/[PROJECT_ID]/omniclaw/vault-sync:latest
+        name: vault-sync
+        command: ["python", "main.py"]
+        args:
+        - "--schedule"
+        - "single"
+        - "--mode"
+        - "single_processing"
+        env:
+        - name: GCP_PROJECT
+          value: "[PROJECT_ID]"
+        - name: VAULT_API_URL
+          value: "https://serve-vault-search-338789220059.asia-south1.run.app"
+        - name: SYNC_INTERVAL
+          value: "86400"  # 24 hours
+        - name: INSTAGRAM_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: instagram-credentials
+              key: username
+        - name: TWITTER_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: twitter-credentials
+              key: username
+        resources:
+          limits:
+            cpu: 500m
+            memory: 256Mi
+          requests:
+            cpu: 200m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      serviceAccountName: vault-sync-single-service-account
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - vault-sync-single-job
+              topologyKey: "kubernetes.io/hostname"
+
+---
+# Service account for the SINGLE sync job
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-sync-single-service-account
+  namespace: vault-sync
+
+---
+# IAM binding for Cloud Scheduler
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: vault-sync-single-scheduler-binding
+  namespace: default
+spec:
+  member: serviceAccount:[PROJECT_ID]@appspot.gserviceaccount.com
+  role: roles/cloudscheduler.jobRunner
+  resourceRef:
+    apiVersion: iam.cnrm.cloud.google.com/v1beta1
+    kind: ServiceAccount
+    external: "vault-sync-single-service-account@default"

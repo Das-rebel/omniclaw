@@ -1,0 +1,170 @@
+# Vault Sync Cron Job Configuration
+# This deploys a Cloud Run service that runs hourly to sync bookmarks
+
+apiVersion: serving.k8s.io/v1
+kind: Service
+metadata:
+  name: vault-sync-cron
+  namespace: vault-sync
+spec:
+  template:
+    spec:
+      containers:
+      - image: us-central1-docker.pkg.dev/[GCP_PROJECT]/omniclaw/vault-sync:latest
+        name: vault-sync-cron
+        env:
+        - name: GCP_PROJECT
+          value: "[GCP_PROJECT]"
+        - name: VAULT_API_URL
+          value: "https://serve-vault-search-338789220059.asia-south1.run.app"
+        - name: SYNC_INTERVAL
+          value: "3600"  # 1 hour in seconds
+        - name: INSTAGRAM_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: instagram-credentials
+              key: username
+        - name: TWITTER_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: twitter-credentials
+              key: username
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+          requests:
+            cpu: 200m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      # Use the Cloud Run default service account
+      serviceAccountName: vault-sync-service-account
+      # Add resource constraints for stability
+      terminationGracePeriodSeconds: 30
+      # Add pod anti-affinity to avoid running on the same node
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - vault-sync-cron
+              topologyKey: "kubernetes.io/hostname"
+
+---
+# Create a separate Cloud Run service for the cron job
+apiVersion: serving.k8s.io/v1
+kind: Service
+metadata:
+  name: vault-sync-cron-job
+  namespace: vault-sync
+spec:
+  template:
+    spec:
+      containers:
+      - image: us-central1-docker.pkg.dev/[GCP_PROJECT]/omniclaw/vault-sync-cron:latest
+        name: vault-sync-cron-job
+        command: ["python", "main.py"]
+        env:
+        - name: GCP_PROJECT
+          value: "[GCP_PROJECT]"
+        - name: VAULT_API_URL
+          value: "https://serve-vault-search-338789220059.asia-south1.run.app"
+        - name: SYNC_INTERVAL
+          value: "3600"  # 1 hour in seconds
+        - name: INSTAGRAM_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: instagram-credentials
+              key: username
+        - name: TWITTER_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: twitter-credentials
+              key: username
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+          requests:
+            cpu: 200m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 5
+          failureThreshold: 3
+      # Use the Cloud Run default service account
+      serviceAccountName: vault-sync-service-account
+      terminationGracePeriodSeconds: 30
+      # Add pod anti-affinity
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - vault-sync-cron-job
+              topologyKey: "kubernetes.io/hostname"
+
+---
+# Service account for the vault sync job
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-sync-service-account
+  namespace: vault-sync
+
+---
+# Role for the service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-sync-role
+  namespace: vault-sync
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+# Role binding for the service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-sync-role-binding
+  namespace: vault-sync
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vault-sync-role
+subjects:
+- kind: ServiceAccount
+  name: vault-sync-service-account
+  namespace: vault-sync

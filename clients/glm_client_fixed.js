@@ -8,7 +8,7 @@
 class GLMClient {
   constructor(apiKey) {
     this.apiKey = apiKey || process.env.ZAI_API_KEY;
-    this.baseUrl = 'api.z.ai';
+    this.baseUrl = 'https://api.z.ai';
     this.basePath = '/api/anthropic';
     this.model = 'claude-sonnet-4-20250514';
     this.timeout = 30000; // 30 seconds timeout

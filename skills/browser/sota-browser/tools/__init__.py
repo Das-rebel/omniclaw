@@ -26,6 +26,7 @@ _TOOL_MODULE_NAMES = [
     "tools.dialog",
     "tools.network",
     "tools.wait",
+    "tools.captcha",
 ]
 
 

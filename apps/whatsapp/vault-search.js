@@ -6,7 +6,13 @@
  *   searchVault(query)      — hybrid query building, FAISS HTTP calls, URL lookup enrichment
  *   buildVaultResult(item, index) — formats individual results (Twitter, Instagram, entity, bookmark)
  *   extractKeywords(query)  — stop word filtering
+ *   trackInterest(userId, query, engagement) — track user interests
+ *   getUserInterests(userId) — get user's interest profile
+ *   getPersonalizedSuggestions(userId) — get personalized bookmark suggestions
+ *   trackBookmarkView(userId, bookmarkId) — track which bookmarks user views
  */
+
+const fs = require('fs');
 
 // ─── Internal HTTP utility (mirrors server.js httpGet) ──
 async function httpGet(url, timeout = 30000) {
@@ -24,7 +30,8 @@ async function httpGet(url, timeout = 30000) {
 }
 
 // ─── Endpoints ──────────────────────────────────────────
-const VAULT_SEARCH_URL = 'https://serve-vault-search-338789220059.asia-south1.run.app';
+// Updated to DigitalOcean endpoint
+const VAULT_SEARCH_URL = 'http://159.65.10.49:8080';
 const LOOKUP_URL = 'https://storage.googleapis.com/omniclaw-knowledge-graph/vault/vault_url_lookup.json';
 
 // ─── Constants ──────────────────────────────────────────
@@ -45,6 +52,112 @@ const INTENT_PATTERNS = {
   LIST: /\b(list|examples|tips|hints|ideas|suggestions|best practices)\b/i,
   DEFINITION: /\b(what is|what are|definition|meaning|explain|definition of)\b/i,
 };
+
+// ─── Interest Tracker ───────────────────────────────────
+// Tracks user interests based on queries and engagement
+const USER_INTERESTS_FILE = '/tmp/omniclaw_user_interests.json';
+
+const TOPIC_KEYWORDS = {
+  'AI & Machine Learning': ['ai', 'machine learning', 'llm', 'gpt', 'claude', 'openai', 'neural', 'transformer', 'model', 'gemini', 'chatgpt', 'anthropic', 'agent', 'rag', 'embedding'],
+  'Design & UX': ['design', 'ux', 'ui', 'figma', 'typography', 'color', 'layout', 'user experience', 'interface'],
+  'Productivity': ['productivity', '效率', 'tools', 'workflow', 'automation', 'notion', 'task'],
+  'Startups & Growth': ['startup', 'founder', 'funding', 'growth', 'marketing', 'saas', 'mrr', 'revenue'],
+  'Coding & DevOps': ['github', 'code', 'python', 'javascript', 'rust', 'api', 'docker', 'kubernetes', 'devops', 'git'],
+  'Hosting & Cloud': ['vps', 'server', 'cloud', 'aws', 'digitalocean', 'oracle', 'hetzner', 'gcp'],
+  'Video & AI': ['video', 'seedance', 'runway', 'kling', 'sora', 'luma', '生成AI', 'AI视频'],
+  'Career & Learning': ['career', 'job', 'resume', 'interview', 'learning', 'course', 'tutorial'],
+  'Data Science': ['data science', 'analytics', 'sql', 'pandas', 'visualization', 'bi'],
+  'Blockchain & Crypto': ['crypto', 'bitcoin', 'web3', 'defi', 'blockchain', 'nft'],
+};
+
+function loadInterests() {
+  try {
+    const data = fs.readFileSync(USER_INTERESTS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch { return {}; }
+}
+
+function saveInterests(interests) {
+  try {
+    fs.writeFileSync(USER_INTERESTS_FILE, JSON.stringify(interests, null, 2));
+  } catch (e) { console.error('Failed to save interests:', e.message); }
+}
+
+function extractTopics(query) {
+  const q = query.toLowerCase();
+  const matched = [];
+  for (const [topic, keywords] of Object.entries(TOPIC_KEYWORDS)) {
+    for (const kw of keywords) {
+      if (q.includes(kw)) {
+        matched.push(topic);
+        break;
+      }
+    }
+  }
+  return matched.length > 0 ? matched : ['General'];
+}
+
+function trackInterest(userId, query, engagement = 'ask') {
+  const interests = loadInterests();
+  if (!interests[userId]) {
+    interests[userId] = { topics: {}, lastActive: null, bookmarksViewed: [], queries: [] };
+  }
+  const user = interests[userId];
+  user.lastActive = new Date().toISOString();
+  
+  const topics = extractTopics(query);
+  const weight = engagement === 'click' ? 2 : 1;
+  
+  for (const topic of topics) {
+    user.topics[topic] = (user.topics[topic] || 0) + weight;
+  }
+  
+  // Keep last 50 queries
+  user.queries.push({ q: query.slice(0, 100), topics, ts: Date.now() });
+  if (user.queries.length > 50) user.queries = user.queries.slice(-50);
+  
+  saveInterests(interests);
+  return topics;
+}
+
+function getUserInterests(userId) {
+  const interests = loadInterests();
+  const user = interests[userId];
+  if (!user || !user.topics) return null;
+  
+  const sorted = Object.entries(user.topics)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([topic, score]) => ({ topic, score }));
+  
+  return {
+    topTopics: sorted,
+    lastActive: user.lastActive,
+    totalQueries: user.queries.length,
+  };
+}
+
+function getPersonalizedSuggestions(userId, limit = 5) {
+  const userInterests = getUserInterests(userId);
+  if (!userInterests || userInterests.totalQueries < 3) {
+    return null; // Not enough data
+  }
+  
+  const topTopic = userInterests.topTopics[0]?.topic;
+  if (!topTopic) return null;
+  
+  return { suggestedTopic: topTopic, reason: `Based on your interest in ${topTopic}` };
+}
+
+function trackBookmarkView(userId, bookmarkId) {
+  const interests = loadInterests();
+  if (!interests[userId]) interests[userId] = { topics: {}, lastActive: null, bookmarksViewed: [], queries: [] };
+  interests[userId].bookmarksViewed.push({ id: bookmarkId, ts: Date.now() });
+  if (interests[userId].bookmarksViewed.length > 100) {
+    interests[userId].bookmarksViewed = interests[userId].bookmarksViewed.slice(-100);
+  }
+  saveInterests(interests);
+}
 
 // ─── URL Lookup Cache ───────────────────────────────────
 let urlLookup = null;
@@ -373,4 +486,4 @@ function buildVaultResult(item, index) {
   return (index + 1) + '. ' + icon + ' ' + lines.join('\n   ');
 }
 
-module.exports = { searchVault, buildVaultResult, extractKeywords, getVaultUrls, getVaultStats };
+module.exports = { searchVault, buildVaultResult, extractKeywords, getVaultUrls, getVaultStats, trackInterest, getUserInterests, getPersonalizedSuggestions, trackBookmarkView };

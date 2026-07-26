@@ -277,17 +277,94 @@ def search_endpoint():
         build_index()
     q = request.args.get('q', '').strip()
     limit = min(int(request.args.get('limit', 10)), MAX_RESULTS)
+    offset = int(request.args.get('offset', 0))
     search_type = request.args.get('type', None)
     if not q:
         return jsonify({'error': 'empty_query', 'results': [], 'count': 0})
     if not nodes_cache:
         return jsonify({'error': 'db_not_found', 'results': [], 'count': 0})
     try:
-        results = search_bm25(q, limit, search_type)
-        return jsonify({'query': q, 'results': results, 'count': len(results)})
+        all_results = search_bm25(q, MAX_RESULTS + offset, search_type)
+        results = all_results[offset:offset + limit]
+        return jsonify({
+            'query': q, 'results': results, 'count': len(results),
+            'offset': offset, 'limit': limit,
+            'total_matched': len(all_results),
+            'has_more': offset + limit < len(all_results)
+        })
     except Exception as e:
         print(f'[Vault] Search error: {e}')
         return jsonify({'error': str(e), 'results': [], 'count': 0})
+
+
+@app.route('/export')
+def export_endpoint():
+    """Export all nodes with pagination — no search/ranking overhead.
+    
+    Query params:
+      offset: starting position (default 0)
+      limit: batch size (default 100, max 500)
+      type: filter by node type (optional)
+    
+    Returns all nodes from vault.db for full coverage sync.
+    """
+    if not nodes_cache:
+        return jsonify({'error': 'db_not_found', 'nodes': [], 'count': 0})
+    
+    offset = int(request.args.get('offset', 0))
+    limit = min(int(request.args.get('limit', 100)), 500)
+    export_type = request.args.get('type', None)
+    
+    filtered = nodes_cache
+    if export_type:
+        filtered = [n for n in nodes_cache if n.get('type') == export_type]
+    
+    total = len(filtered)
+    batch = filtered[offset:offset + limit]
+    
+    results = []
+    for node in batch:
+        meta = node.get('metadata', {}) or {}
+        content = node.get('content', '') or ''
+        topic = meta.get('topic', '') or extract_topic_from_content(content)
+        results.append({
+            'id': node['id'],
+            'type': node['type'],
+            'name': node['name'] or '',
+            'content': content,
+            'url': node['url'] or '',
+            'timestamp': node['timestamp'] or '',
+            'score': 1.0,
+            'topic': topic,
+            'hashtags': ((meta.get('hashtags') or extract_hashtags_from_content(content) or [e.get('name','') for e in (meta.get('entities') or []) if isinstance(e,dict) and e.get('type')=='hashtag'] or meta.get('vlTags')) or [])[:10],
+            'entities': ((meta.get('entities') or extract_entities_from_content(content)) or [])[:5],
+            'metadata': {
+                'topic': topic,
+                'tags': ((meta.get('hashtags') or extract_hashtags_from_content(content) or [e.get('name','') for e in (meta.get('entities') or []) if isinstance(e,dict) and e.get('type')=='hashtag'] or meta.get('vlTags')) or [])[:10],
+                'vlTags': (meta.get('vlTags') or [])[:10],
+                'vlSubject': (meta.get('vlSubject') or '')[:200],
+                'mood': meta.get('vlMood', ''),
+                'narrative': (meta.get('narrative') or '')[:500],
+                'location': meta.get('location', ''),
+                'sentiment': meta.get('sentiment', ''),
+                'categories': (meta.get('categories') or [])[:5],
+                'topics': (meta.get('topics') or [])[:5],
+            }
+        })
+    
+    return jsonify({
+        'nodes': results,
+        'count': len(results),
+        'offset': offset,
+        'limit': limit,
+        'total': total,
+        'has_more': offset + limit < total,
+        'types': {
+            'twitter_tweet': sum(1 for n in nodes_cache if n.get('type') == 'twitter_tweet'),
+            'instagram_post': sum(1 for n in nodes_cache if n.get('type') == 'instagram_post'),
+            'other': sum(1 for n in nodes_cache if n.get('type') not in ('twitter_tweet', 'instagram_post')),
+        }
+    })
 
 @app.route('/reload')
 def reload():

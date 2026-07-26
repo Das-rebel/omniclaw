@@ -93,7 +93,7 @@ async function httpGet(url, timeout = 30000) {
 
 // ─── Cloud Endpoints ──────────────────────────────────
 const EP = {
-  vaultSearch: 'https://serve-vault-search-338789220059.asia-south1.run.app',
+  vaultSearch: 'http://159.65.10.49:8080',
   twitterSync: 'https://twitter-sync-338789220059.asia-south1.run.app',
   instagram: 'https://instagram-sync-338789220059.asia-south1.run.app',
   bookmarks: 'https://bookmark-processor-338789220059.asia-south1.run.app',

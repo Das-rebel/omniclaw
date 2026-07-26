@@ -1,5 +1,0 @@
-functions-framework>=3.0
-flask>=2.0
-httpx>=0.24
-google-cloud-storage>=2.0
-twscrape>=0.17.0

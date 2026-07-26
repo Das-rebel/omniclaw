@@ -14,7 +14,7 @@ Idempotent: safe to run multiple times (deduplicates by url).
 import json
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add parent for imports
@@ -73,8 +73,8 @@ def migrate_node(row: sqlite3.Row, conn: sqlite3.Connection) -> bool:
         title = name
         bookmarked_at = timestamp
 
-    scraped_at = metadata.get("extracted_at", metadata.get("scraped_at", timestamp or datetime.utcnow().isoformat()))
-    now = datetime.utcnow().isoformat()
+    scraped_at = metadata.get("extracted_at", metadata.get("scraped_at", timestamp or datetime.now(timezone.utc).isoformat()))
+    now = datetime.now(timezone.utc).isoformat()
 
     try:
         cursor = conn.execute(

@@ -1,0 +1,42 @@
+{
+  "last_run": "2026-07-25T22:30:05.602717+00:00",
+  "errors": [
+    {
+      "stage": "twitter",
+      "error_code": "TIMEOUT",
+      "error_detail": "Scrape timed out after 90s — may need auth refresh",
+      "action_required": "",
+      "timestamp": "2026-07-04T04:06:38.772660+00:00"
+    }
+  ],
+  "schema_version": "2.0",
+  "pipeline_version": "2.0.0",
+  "_written_at": "2026-07-25T22:30:31.605560+00:00",
+  "stages": {
+    "ingest": {
+      "status": "ok"
+    },
+    "sync_nodes": {
+      "status": "ok"
+    },
+    "export": {
+      "status": "ok"
+    },
+    "enrich": {
+      "status": "background_launched",
+      "max_items": 20
+    },
+    "twitter": {
+      "status": "error",
+      "error_code": "TIMEOUT",
+      "error_detail": "Scrape timed out after 90s — may need auth refresh"
+    },
+    "instagram": {
+      "status": "error",
+      "error_code": "TIMEOUT",
+      "error_detail": "Scrape timed out after 90s"
+    }
+  },
+  "last_success": "2026-07-25T22:30:31.575864+00:00",
+  "duration_sec": 28.0
+}

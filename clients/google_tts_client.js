@@ -10,7 +10,7 @@ const https = require('https');
 class GoogleTTSClient {
   constructor(apiKey) {
     this.apiKey = apiKey;
-    this.baseURL = 'texttospeech.googleapis.com';
+    this.baseURL = 'https://texttospeech.googleapis.com';
   }
 
   /**

@@ -9,7 +9,7 @@ const { createValidator } = require('./response_validator');
 class CerebrasClient {
   constructor(apiKey) {
     this.apiKey = apiKey;
-    this.baseUrl = 'api.cerebras.ai';
+    this.baseUrl = 'https://api.cerebras.ai';
     this.model = 'llama3.1-8b';
     this.validator = createValidator('Cerebras');
   }

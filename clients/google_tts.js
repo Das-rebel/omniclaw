@@ -10,7 +10,7 @@ const path = require('path');
 class GoogleTTSClient {
   constructor(apiKey) {
     this.apiKey = apiKey;
-    this.baseUrl = 'texttospeech.googleapis.com';
+    this.baseUrl = 'https://texttospeech.googleapis.com';
 
     // Language mappings
     this.voiceMap = {

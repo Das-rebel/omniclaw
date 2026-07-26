@@ -9,7 +9,7 @@ const { createValidator } = require('./response_validator');
 class TavilyClient {
   constructor(apiKey) {
     this.apiKey = apiKey;
-    this.baseUrl = 'api.tavily.com';
+    this.baseUrl = 'https://api.tavily.com';
     this.validator = createValidator('Tavily');
   }
 

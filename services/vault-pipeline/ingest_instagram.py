@@ -14,7 +14,7 @@ import json
 import os
 import sys
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -74,63 +74,124 @@ async def scrape_via_instagrapi() -> list[dict]:
         log("No INSTAGRAM_COOKIES set, skipping live scrape")
         return []
 
-    cookies = {}
-    for part in cookies_str.split(";"):
-        part = part.strip()
-        if "=" in part:
-            k, v = part.split("=", 1)
-            cookies[k.strip()] = v.strip()
+    # Handle GCS cookie format: {"cookies": {...}, "timestamp": "..."}
+    try:
+        cookies_data = json.loads(cookies_str)
+        if isinstance(cookies_data, dict) and "cookies" in cookies_data:
+            cookies = cookies_data["cookies"]
+            log(f"Extracted Instagram cookies from GCS format")
+        else:
+            cookies = cookies_data
+    except json.JSONDecodeError:
+        # Not JSON - parse semicolon-separated format
+        cookies = {}
+        for part in cookies_str.split(";"):
+            part = part.strip()
+            if "=" in part:
+                k, v = part.split("=", 1)
+                cookies[k.strip()] = v.strip()
 
-    if "sessionid" not in cookies:
+    sessionid = cookies.get("sessionid", "")
+    if not sessionid:
         log("No sessionid in cookies, skipping")
         return []
 
     try:
+        import asyncio
         from instagrapi import Client
 
-        cl = Client()
-        cl.set_settings({"cookies": cookies, "username": username})
+        def _extract_posts_from_medias(medias: list) -> list[dict]:
+            """Extract posts from instagrapi Media objects, expanding carousels into multiple entries."""
+            result = []
+            for media in medias:
+                code = getattr(media, "code", "") or ""
+                caption = getattr(media, "caption_text", "") or ""
+                taken_at = media.taken_at.isoformat() if hasattr(media, "taken_at") and media.taken_at else ""
+                media_type = {1: "photo", 2: "video", 8: "carousel"}.get(getattr(media, "media_type", 1), "photo")
+                username = getattr(media.user, "username", "") if hasattr(media, "user") else ""
+                scraped_at = datetime.now(timezone.utc).isoformat()
+                
+                if not code:
+                    continue
+                
+                # Handle carousel posts: expand into one entry per carousel image
+                resources = getattr(media, "resources", []) or []
+                if resources and media_type == "carousel":
+                    for idx, resource in enumerate(resources):
+                        resource_image_url = str(getattr(resource, "thumbnail_url", "") or "")
+                        if resource_image_url:
+                            result.append({
+                                "code": code,
+                                "caption": caption,
+                                "url": f"https://www.instagram.com/p/{code}/?img_index={idx}",
+                                "image_url": resource_image_url,
+                                "media_type": "carousel",
+                                "carousel_index": idx,
+                                "taken_at": taken_at,
+                                "username": username,
+                                "scraped_at": scraped_at,
+                            })
+                else:
+                    # Regular photo/video post
+                    image_url = str(getattr(media, "thumbnail_url", "") or "")
+                    result.append({
+                        "code": code,
+                        "caption": caption,
+                        "url": f"https://www.instagram.com/p/{code}/" if code else "",
+                        "image_url": image_url,
+                        "media_type": media_type,
+                        "taken_at": taken_at,
+                        "username": username,
+                        "scraped_at": scraped_at,
+                    })
+            return result
 
-        posts = []
-        log("Fetching saved media via instagrapi...")
-        saved_medias = cl.saved_medias(amount=0)  # 0 = all
-        for media in saved_medias:
-            code = getattr(media, "code", "") or getattr(media, "shortcode", "")
-            caption = ""
-            if hasattr(media, "caption_text"):
-                caption = media.caption_text or ""
-            elif hasattr(media, "caption") and media.caption:
-                caption = media.caption.text if hasattr(media.caption, "text") else str(media.caption)
+        async def scrape_with_timeout():
+            cl = Client()
+            
+            # Login via sessionid (proper auth method)
+            result = cl.login_by_sessionid(sessionid)
+            log(f"Instagram login: {result}, username: {cl.username}")
+            
+            if not cl.username:
+                log("Instagram login failed")
+                return []
 
-            image_url = ""
-            if hasattr(media, "thumbnail_url"):
-                image_url = str(media.thumbnail_url) if media.thumbnail_url else ""
-            elif hasattr(media, "resources") and media.resources:
-                image_url = str(media.resources[0].thumbnail_url) if hasattr(media.resources[0], "thumbnail_url") else ""
+            posts = []
+            log("Fetching saved media via instagrapi...")
 
-            media_type = "photo"
-            if hasattr(media, "media_type"):
-                mt = {1: "photo", 2: "video", 8: "carousel"}.get(media.media_type, "photo")
-                media_type = mt
+            # Get all collections and find the main one
+            collections = cl.collections()
+            log(f"Found {len(collections)} collections")
+            
+            # Try "Saved" collection first, then fall back to all collections
+            target_collection = None
+            for c in collections:
+                if c.name and c.name.lower() == "saved":
+                    target_collection = c
+                    break
+            
+            if not target_collection:
+                # No "Saved" collection - get user's own media instead
+                log("No 'Saved' collection found, fetching user media")
+                medias = cl.user_medias(cl.user_id, amount=50)
+                posts.extend(_extract_posts_from_medias(medias))
+                log(f"Got {len(posts)} user media items")
+                return posts
+            
+            # Fetch from Saved collection
+            log(f"Found Saved collection (id={target_collection.id})")
+            saved_medias = cl.collection_medias(target_collection.id, amount=0)
+            posts.extend(_extract_posts_from_medias(saved_medias))
+            log(f"Got {len(posts)} saved posts")
+            return posts
 
-            taken_at = ""
-            if hasattr(media, "taken_at"):
-                taken_at = media.taken_at.isoformat() if media.taken_at else ""
-
-            posts.append({
-                "code": code,
-                "caption": caption,
-                "url": f"https://www.instagram.com/p/{code}/" if code else "",
-                "image_url": image_url,
-                "media_type": media_type,
-                "taken_at": taken_at,
-                "username": getattr(media.user, "username", "") if hasattr(media, "user") else "",
-                "scraped_at": datetime.utcnow().isoformat(),
-            })
-
-        log(f"instagrapi fetched {len(posts)} saved posts")
-        return posts
-
+        # Run with 30 second timeout
+        try:
+            return await asyncio.wait_for(scrape_with_timeout(), timeout=30)
+        except asyncio.TimeoutError:
+            log("instagrapi timed out after 30s, falling back to GCS")
+            return []
     except ImportError:
         log("instagrapi not installed, skipping live scrape")
         return []
@@ -149,7 +210,7 @@ def normalize_instagram(raw: dict) -> dict:
     image_url = raw.get("image_url", raw.get("imageUrl", ""))
     media_type = raw.get("media_type", raw.get("mediaType", "photo"))
     taken_at = raw.get("taken_at", raw.get("postDate", raw.get("timestamp", "")))
-    scraped_at = raw.get("scraped_at", raw.get("extracted_at", datetime.utcnow().isoformat()))
+    scraped_at = raw.get("scraped_at", raw.get("extracted_at", datetime.now(timezone.utc).isoformat()))
     username = raw.get("username", raw.get("user", ""))
 
     # Build metadata from extra fields
@@ -295,7 +356,7 @@ def ingest_bookmarks(bookmarks: list[dict], db_path: str | Path | None = None) -
     """Ingest a list of normalized Instagram bookmarks into the DB."""
     conn = get_db(db_path)
     stats = {"inserted": 0, "updated": 0, "skipped": 0, "errors": 0}
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     for bm in bookmarks:
         if not bm.get("url"):

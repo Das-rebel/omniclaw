@@ -1,4 +1,4 @@
-"""
+""""
 SOTA Browser MCP Server — Configuration Constants
 """
 
@@ -12,7 +12,7 @@ USER_AGENT = (
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "sota-browser"
-SERVER_VERSION = "1.3.0"
+SERVER_VERSION = "1.7.0"  # CloakBrowser integration + proxy rotation
 
 # Retry defaults
 RETRY_MAX_ATTEMPTS = 3
@@ -31,3 +31,8 @@ CACHE_SIMILARITY_THRESHOLD = 0.7
 
 # Memory defaults
 MEMORY_MAX_ACTIONS = 200
+
+# Nopecha CAPTCHA defaults
+NOPECHA_API_URL = "https://api.nopecha.com/v1"
+NOPECHA_SOLVE_TIMEOUT_S = 60  # Max wait for CAPTCHA solution
+NOPECHA_POLL_INTERVAL_S = 3  # Poll interval when waiting for solution

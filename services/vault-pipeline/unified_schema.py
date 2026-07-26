@@ -13,7 +13,7 @@ Tables:
 import sqlite3
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 DEFAULT_DB_PATH = Path.home() / "omniclaw" / "infrastructure" / "cloud-functions" / "deploy" / "learning_base" / "vault.db"
@@ -103,7 +103,7 @@ def init_schema(db_path: str | Path | None = None) -> sqlite3.Connection:
     # Record schema version
     conn.execute(
         "INSERT OR REPLACE INTO bookmarks_meta (key, value, updated_at) VALUES (?, ?, ?)",
-        ("schema_version", SCHEMA_VERSION, datetime.utcnow().isoformat()),
+        ("schema_version", SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
     return conn
@@ -129,7 +129,7 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str):
     """Write a bookmarks_meta value."""
     conn.execute(
         "INSERT OR REPLACE INTO bookmarks_meta (key, value, updated_at) VALUES (?, ?, ?)",
-        (key, value, datetime.utcnow().isoformat()),
+        (key, value, datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
 

@@ -95,6 +95,19 @@ class GreenAPI {
     const result = await this._post('setReaction', { chatId, idMessage: messageId, reaction: emoji });
     return result.ok ? result.data : result;
   }
+
+  // ─── Typing Indicator ───────────────────────────────
+  async sendTyping(chatId, typingState) {
+    // typingState: true = on, false = off
+    const result = await this._post('sendTypingState', { chatId, typingState });
+    return result.ok ? result.data : result;
+  }
+
+  // ─── Mark Read ───────────────────────────────────
+  async markRead(chatId, messageId) {
+    const result = await this._post('readMessage', { chatId, idMessage: messageId });
+    return result.ok ? result.data : result;
+  }
 }
 
 module.exports = GreenAPI;

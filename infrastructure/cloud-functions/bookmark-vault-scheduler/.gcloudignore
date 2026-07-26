@@ -1,9 +1,0 @@
-.gcloudignore
-.git
-.gitignore
-
-# Exclude unnecessary files
-*.pyc
-accounts.db
-google-apps-script/
-ruff_cache/

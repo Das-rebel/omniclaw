@@ -10,7 +10,7 @@ const https = require('https');
 class GLMClient {
   constructor(apiKey) {
     this.apiKey = apiKey || process.env.ZAI_API_KEY;
-    this.baseUrl = 'api.z.ai';
+    this.baseUrl = 'https://api.z.ai';
     this.basePath = '/api/anthropic'; // Use correct Z.ai Anthropic path
     this.model = 'claude-sonnet-4-20250514'; // Use Anthropic Claude Sonnet 4
     this.timeout = 30000; // 30 seconds timeout

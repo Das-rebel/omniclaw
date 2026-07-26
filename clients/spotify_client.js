@@ -5,7 +5,7 @@ class SpotifyClient {
   constructor(accessToken, refreshToken) {
     this.accessToken = accessToken || null;
     this.refreshToken = refreshToken || process.env.SPOTIFY_REFRESH_TOKEN || null;
-    this.baseUrl = 'api.spotify.com';
+    this.baseUrl = 'https://api.spotify.com';
 
     this.clientId = process.env.SPOTIFY_CLIENT_ID || '';
     this.clientSecret = process.env.SPOTIFY_CLIENT_SECRET || '';

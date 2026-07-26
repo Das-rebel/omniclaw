@@ -13,10 +13,18 @@ LOG="/tmp/vault_sync.log"
 
 echo "===== Vault Daily Sync - $(date -u '+%Y-%m-%d %H:%M:%S UTC') =====" >> "$LOG" 2>&1
 
+# --- Step 0: Load cookies from GCS ---
+echo "[0/4] Loading cookies from GCS..." >> "$LOG" 2>&1
+export TWITTER_COOKIES=$(/opt/homebrew/bin/gsutil cat gs://omniclaw-knowledge-graph/vault/cookies/twitter_cookies.json 2>/dev/null || echo "")
+export INSTAGRAM_COOKIES=$(/opt/homebrew/bin/gsutil cat gs://omniclaw-knowledge-graph/vault/cookies/instagram_cookies.json 2>/dev/null || echo "")
+export TWITTER_USERNAME="Subhojit_Sarkar"
+export INSTAGRAM_USERNAME="subhojit.sarkar"
+echo "[0/4] Cookies loaded (TWITTER: $([ -n "$TWITTER_COOKIES" ] && echo yes || echo no), INSTAGRAM: $([ -n "$INSTAGRAM_COOKIES" ] && echo yes || echo no))" >> "$LOG" 2>&1
+
 # --- Step 1: Run full sync pipeline (scrape twitter + instagram, ingest, export to GCS) ---
 echo "[1/4] Running sync_pipeline.py (scrape + ingest + export)..." >> "$LOG" 2>&1
 cd "$PIPELINE_DIR"
-"$PYTHON" sync_pipeline.py >> "$LOG" 2>&1
+"$PYTHON" sync_pipeline.py --db "$DEPLOY_DIR/learning_base/vault.db" >> "$LOG" 2>&1
 SYNC_EXIT=$?
 if [ $SYNC_EXIT -ne 0 ]; then
     echo "[ERROR] sync_pipeline.py exited with code $SYNC_EXIT" >> "$LOG" 2>&1

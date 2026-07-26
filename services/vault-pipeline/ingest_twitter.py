@@ -14,7 +14,7 @@ import json
 import os
 import sys
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -68,38 +68,61 @@ def read_from_local() -> list[dict]:
 
 async def scrape_via_twscrape() -> list[dict]:
     """Scrape bookmarks live via twscrape API."""
-    cookies = os.getenv("TWITTER_COOKIES", "")
+    cookies_str = os.getenv("TWITTER_COOKIES", "")
     username = os.getenv("TWITTER_USERNAME", "")
 
-    if not cookies:
+    if not cookies_str:
         log("No TWITTER_COOKIES set, skipping live scrape")
         return []
 
+    # Handle GCS cookie format: {"cookies": {...}, "timestamp": "..."}
+    # vs plain JSON cookies string
     try:
+        cookies_data = json.loads(cookies_str)
+        if isinstance(cookies_data, dict) and "cookies" in cookies_data:
+            # GCS format - extract inner cookies dict
+            cookies_str = json.dumps(cookies_data["cookies"])
+            log(f"Extracted cookies from GCS format (timestamp: {cookies_data.get('timestamp', 'unknown')})")
+        # else: cookies_str is already the raw cookies JSON string
+    except json.JSONDecodeError:
+        # Not JSON - assume it's already the cookie string format "key=value;key2=value2"
+        pass
+
+    try:
+        import asyncio
         from twscrape import API
         from twscrape.accounts_pool import AccountsPool
 
-        pool = AccountsPool()
-        await pool.add_account(
-            username=username, password="", email="",
-            email_password="", cookies=cookies,
-        )
-        await pool.login_all()
-        api = API(pool)
+        # Create a timeout for the scrape operation
+        async def scrape_with_timeout():
+            pool = AccountsPool()
+            await pool.add_account(
+                username=username, password="", email="",
+                email_password="", cookies=cookies_str,
+            )
+            await pool.login_all()
+            api = API(pool)
 
-        tweets = []
-        async for tweet in api.bookmarks(limit=200):
-            tweets.append({
-                "id": str(tweet.id),
-                "text": tweet.rawText,
-                "author": tweet.user.screenName if tweet.user else "",
-                "url": f"https://x.com/{tweet.user.screenName if tweet.user else 'unknown'}/status/{tweet.id}",
-                "created_at": tweet.dateStr if hasattr(tweet, "dateStr") else datetime.utcnow().isoformat(),
-                "scraped_at": datetime.utcnow().isoformat(),
-            })
+            tweets = []
+            async for tweet in api.bookmarks(limit=200):
+                tweets.append({
+                    "id": str(tweet.id),
+                    "text": tweet.rawContent if hasattr(tweet, 'rawContent') else (tweet.rawText if hasattr(tweet, 'rawText') else ''),
+                    "author": tweet.user.username if tweet.user else "",
+                    "url": f"https://x.com/{tweet.user.username if tweet.user else 'unknown'}/status/{tweet.id}",
+                    "created_at": str(tweet.date) if hasattr(tweet, 'date') else datetime.now(timezone.utc).isoformat(),
+                    "scraped_at": datetime.now(timezone.utc).isoformat(),
+                })
+            return tweets
 
-        log(f"twscrape fetched {len(tweets)} tweets")
-        return tweets
+        # Run with 30 second timeout
+        try:
+            tweets = await asyncio.wait_for(scrape_with_timeout(), timeout=30)
+            log(f"twscrape fetched {len(tweets)} tweets")
+            return tweets
+        except asyncio.TimeoutError:
+            log("twscrape timed out after 30s, falling back to GCS")
+            return []
     except ImportError:
         log("twscrape not installed, skipping live scrape")
         return []
@@ -115,7 +138,7 @@ def normalize_tweet(raw: dict) -> dict:
     author = raw.get("author", raw.get("username", ""))
     url = raw.get("url", f"https://x.com/{author}/status/{tweet_id}" if tweet_id else "")
     created_at = raw.get("created_at", raw.get("timestamp", ""))
-    scraped_at = raw.get("scraped_at", raw.get("extracted_at", datetime.utcnow().isoformat()))
+    scraped_at = raw.get("scraped_at", raw.get("extracted_at", datetime.now(timezone.utc).isoformat()))
 
     # Build metadata from any extra fields
     meta_keys = {"id", "text", "content", "full_text", "author", "username",
@@ -138,7 +161,7 @@ def ingest_bookmarks(bookmarks: list[dict], db_path: str | Path | None = None) -
     """Ingest a list of normalized twitter bookmarks into the DB."""
     conn = get_db(db_path)
     stats = {"inserted": 0, "updated": 0, "skipped": 0, "errors": 0}
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     for bm in bookmarks:
         if not bm.get("url"):

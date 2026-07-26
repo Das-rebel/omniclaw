@@ -1,0 +1,173 @@
+# Vault Sync Monitoring Configuration
+# Configures monitoring and alerting for the vault sync service
+
+apiVersion: monitoring.cnrm.cloud.google.com/v1beta1
+kind: Service
+metadata:
+  name: vault-sync-service
+  namespace: default
+spec:
+  type: "apiserver"
+  selector:
+    matchLabels:
+      app: vault-sync
+  serviceAccountName: vault-sync-service-account
+
+---
+# Cloud Monitoring Dashboard for Vault Sync
+apiVersion: monitoring.cnrm.cloud.google.com/v1beta1
+kind: ServiceMonitor
+metadata:
+  name: vault-sync-service-monitor
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: vault-sync
+  endpoints:
+  - port: "8080"
+    path: "/metrics"
+    interval: 30s
+
+---
+# Alert Policy for Sync Failures
+apiVersion: monitoring.cnrm.cloud.google.com/v1beta1
+kind: AlertPolicy
+metadata:
+  name: vault-sync-failure-alert
+  namespace: default
+spec:
+  displayName: "Vault Sync Failure"
+  combiner: "OR"
+  conditions:
+  - displayName: "Sync job failed"
+    conditionThreshold:
+      filter: "resource.type=\"cloud_run_job\""
+      comparison: "COMPARISON_GT"
+      thresholdValue: 0
+      duration: "300s"
+      aggregations:
+      - alignmentPeriod: "300s"
+        perSeriesAligner: "ALIGN_RATE"
+        crossSeriesReducer: "REDUCE_SUM"
+       groupByFields:
+        - "resource.project_id"
+        - "resource.location"
+        - "resource.service_name"
+  - displayName: "Vault sync timeout"
+    conditionThreshold:
+      filter: "metric.type=\"custom.googleapis.com/vault_sync_duration\""
+      comparison: "COMPARISON_GT"
+      thresholdValue: 600  # 10 minutes
+      duration: "600s"
+      aggregations:
+      - alignmentPeriod: "600s"
+        perSeriesAligner: "ALIGN_MEAN"
+        crossSeriesReducer: "REDUCE_MEAN"
+        groupByFields:
+        - "resource.project_id"
+          - "resource.location"
+          - "resource.service_name"
+  notificationChannels:
+  - "projects/[PROJECT_ID]/notificationChannels/email"
+  - "projects/[PROJECT_ID]/notificationChannels/slack"
+  combiner: "OR"
+  enabled: true
+  documentation:
+    content: "Vault sync job has failed or taken too long. Check Cloud Run jobs and logs."
+    mimeType: "text/markdown"
+
+---
+# Uptime Check for Vault API
+apiVersion: monitoring.cnrm.cloud.google.com/v1beta1
+kind: UptimeCheck
+metadata:
+  name: vault-api-uptime-check
+  namespace: default
+spec:
+  timeout: "10s"
+  period: "60s"
+  selectedRegions:
+  - "ASIA_SOUTH1"
+  - "EUROPE_WEST1"
+  - "US_CENTRAL1"
+  resource:
+    type: "uptime_url"
+    labels:
+      project_id: "[PROJECT_ID]"
+      host: "serve-vault-search-338789220059.asia-south1.run.app"
+  monitoredResource:
+    type: "uptime_url"
+    labels:
+      project_id: "[PROJECT_ID]"
+      host: "serve-vault-search-338789220059.asia-south1.run.app"
+  httpCheck:
+    path: "/stats"
+    port: 443
+    useSsl: true
+    requestMethod: "GET"
+  alertThresholds:
+    maxCheckFailures: 2
+    maxResponseTime: 5s
+
+---
+# Metrics Exporter Configuration
+apiVersion: monitoring.cnrm.cloud.google.com/v1beta1
+kind: MetricDescriptor
+metadata:
+  name: vault_sync_duration
+  namespace: default
+spec:
+  displayName: "Vault Sync Duration"
+  description: "Duration of vault sync operations"
+  metricKind: "GAUGE"
+  valueType: "DOUBLE"
+  unit: "seconds"
+  type: "custom.googleapis.com/vault_sync_duration"
+  labels:
+  - key: "service"
+    valueType: "STRING"
+    description: "Service name"
+  - key: "sync_type"
+    valueType: "STRING"
+    description: "Type of sync (hourly/daily/manual)"
+
+---
+# Logging Sink for Sync Logs
+apiVersion: logging.cnrm.cloud.google.com/v1beta1
+kind: Sink
+metadata:
+  name: vault-sync-logs
+  namespace: default
+spec:
+  destination:
+    cloudRun:
+      serviceName: vault-sync-logs
+      serviceNamespace: vault-sync
+  filter: "logName=\"projects/[PROJECT_ID]/logs/vault-sync\""
+  includeChildren: true
+
+---
+# Logging Bucket for Log Storage
+apiVersion: logging.cnrm.cloud.google.com/v1beta1
+kind: LogBucket
+metadata:
+  name: vault-sync-logs-bucket
+  namespace: default
+spec:
+  retentionDays: 30
+  location: "asia-south1"
+
+---
+# Log View for Sync Monitoring
+apiVersion: logging.cnrm.cloud.google.com/v1beta1
+kind: LogView
+metadata:
+  name: vault-sync-view
+  namespace: default
+spec:
+  bucket:
+    name: "vault-sync-logs-bucket"
+    namespace: default
+  filter: "logName=\"projects/[PROJECT_ID]/logs/vault-sync\""
+  description: "Vault sync logs for monitoring and debugging"

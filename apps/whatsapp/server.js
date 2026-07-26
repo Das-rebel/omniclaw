@@ -19,6 +19,17 @@ const BOT_PHONE = process.env.BOT_PHONE || '';
 const WA_API_KEY = process.env.WA_API_KEY || '';
 const ADMIN_PHONES = (process.env.ADMIN_PHONES || '').split(',').filter(Boolean);
 
+// ─── WhatsApp Group Whitelist ──────────────────────────
+// Only respond to messages from these groups. Empty array = allow all groups.
+// Add group JIDs to enable, leave empty to allow all.
+const ALLOWED_GROUPS = (
+  process.env.ALLOWED_GROUPS || '120363408616437592@g.us,120363141914506124@g.us,120363404584160486@g.us'
+).split(',').filter(Boolean);
+
+// Groups that are allowed to receive outbound messages (for waSend calls)
+// This is stricter — we only PUSH to these groups via GreenAPI
+const OUTBOUND_GROUPS = (process.env.OUTBOUND_GROUPS || '').split(',').filter(Boolean);
+
 // ─── GreenAPI Wrapper ────────────────────────────────
 const GreenAPI = require('./greenapi-wrapper');
 const api = new GreenAPI(INSTANCE_ID, API_TOKEN);
@@ -29,6 +40,113 @@ const { checkRate, enqueue, MAX_PER_MINUTE } = require('./rate-limiter');
 // ─── Free-text vault auto-search rate limiter ─────────
 const freeTextCount = new Map(); // phone → [{time}]
 const FREE_TEXT_LIMIT = 3; // max auto-searches per 60 seconds
+
+// ─── Conversation Timeout & Long-term Memory ────────────────────────────
+const CONVERSATION_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes of inactivity
+const MAX_SHORT_MEMORY = 6; // Short-term memory (already in code)
+const LONG_TERM_MEMORY_FILE = '/tmp/omniclaw_long_term_memory.json';
+
+// Load long-term memory from disk
+let longTermMemory = {};
+try {
+  if (fs.existsSync(LONG_TERM_MEMORY_FILE)) {
+    longTermMemory = JSON.parse(fs.readFileSync(LONG_TERM_MEMORY_FILE, 'utf8'));
+    console.log('📚 Loaded long-term memory for ' + Object.keys(longTermMemory).length + ' users');
+  }
+} catch(e) {
+  console.error('Failed to load long-term memory:', e.message);
+}
+
+// Save long-term memory periodically
+setInterval(() => {
+  try {
+    fs.writeFileSync(LONG_TERM_MEMORY_FILE, JSON.stringify(longTermMemory));
+  } catch(e) {
+    console.error('Failed to save long-term memory:', e.message);
+  }
+}, 60000); // Every minute
+
+// Track last activity per user
+const lastActivity = new Map();
+
+function updateLastActivity(phone) {
+  lastActivity.set(phone, Date.now());
+}
+
+function isConversationExpired(phone) {
+  const last = lastActivity.get(phone);
+  if (!last) return false;
+  return Date.now() - last > CONVERSATION_TIMEOUT_MS;
+}
+
+function getLongTermContext(phone, maxChars = 2000) {
+  const memory = longTermMemory[phone];
+  if (!memory) return '';
+  // Format: most recent conversations
+  const history = memory.history || [];
+  if (history.length === 0) return '';
+  
+  // Build context string
+  let context = '';
+  for (const msg of history.slice(-10)) {
+    const role = msg.role === 'user' ? 'You: ' : 'Bot: ';
+    context += role + msg.content.slice(0, 200) + '\n';
+    if (context.length > maxChars) break;
+  }
+  return context;
+}
+
+function addToLongTermMemory(phone, role, content) {
+  if (!longTermMemory[phone]) {
+    longTermMemory[phone] = { history: [], lastSaved: Date.now() };
+  }
+  const memory = longTermMemory[phone];
+  memory.history.push({ role, content, ts: Date.now() });
+  
+  // Keep last 100 messages per user
+  if (memory.history.length > 100) {
+    memory.history = memory.history.slice(-100);
+  }
+  memory.lastSaved = Date.now();
+}
+
+function resetConversation(phone) {
+  // Clear short-term memory
+  conversationMemory.delete(phone);
+  // Clear long-term memory
+  if (longTermMemory[phone]) {
+    longTermMemory[phone].history = [];
+  }
+  lastActivity.delete(phone);
+  return true;
+}
+
+function searchLongTermMemory(phone, query) {
+  const memory = longTermMemory[phone];
+  if (!memory) return [];
+  const q = query.toLowerCase();
+  return memory.history.filter(m => 
+    m.content.toLowerCase().includes(q)
+  ).slice(-5);
+}
+
+// ─── Typing Indicator Helper ──────────────────────────────
+async function showTyping(phone, show = true) {
+  try {
+    await api.sendTyping(normalizeChatId(phone), show);
+  } catch(e) {
+    // Silent fail - typing indicator is optional
+  }
+}
+
+// ─── Message Reaction Helper ──────────────────────────────
+async function reactToMessage(chatId, messageId, emoji) {
+  try {
+    await api.sendReaction(normalizeChatId(chatId), messageId, emoji);
+  } catch(e) {
+    // Silent fail - reactions are optional
+  }
+}
 
 // ─── GreenAPI Send Helpers ────────────────────────────
 function normalizeChatId(phone) {
@@ -49,7 +167,7 @@ async function waSendList(phone, message, buttonText, sections) {
 
 // ─── Cloud Endpoints (full list = Telegram) ──────────
 const EP = {
-  vaultSearch: 'https://serve-vault-search-338789220059.asia-south1.run.app',
+  vaultSearch: 'http://159.65.10.49:8080',
   twitterSync: 'https://twitter-sync-338789220059.asia-south1.run.app',
   instagram: 'https://instagram-sync-338789220059.asia-south1.run.app',
   bookmarks: 'https://bookmark-processor-338789220059.asia-south1.run.app',
@@ -87,7 +205,7 @@ async function checkEndpoint(name) {
 }
 
 // ─── Vault Search — imported from vault-search.js ─────
-const { searchVault, buildVaultResult, extractKeywords, getVaultUrls } = require('./vault-search');
+const { searchVault, buildVaultResult, extractKeywords, getVaultUrls, trackInterest, getUserInterests, getPersonalizedSuggestions, trackBookmarkView } = require('./vault-search');
 
 // ─── Vault Rankings (learning from usage) ────────────
 const VAULT_RANKS_FILE = '/tmp/vault_ranks.json';
@@ -320,6 +438,9 @@ async function handleHelp(phone) {
     '📋 *Commands*\n' +
     '/start - Welcome message\n' +
     '/help - Show this help\n' +
+    '/reset - Clear conversation memory\n' +
+    '/memory - Show conversation history\n' +
+    '/interests - Show your interest profile\n' +
     '/status - Cloud endpoints health\n' +
     '/vault <query> - Search knowledge graph\n' +
     '/sync - Twitter & Instagram sync status\n' +
@@ -331,10 +452,14 @@ async function handleHelp(phone) {
     '/digest <topic> - AI-generated vault digest\n' +
     '/prompts - Prompt tracker stats\n' +
     '/ask <question> - Ask AI anything\n' +
-    '/tts <text> - Text to speech\n\n' +
+    '/tts <text> - Text to speech\n' +
+    '/schedule - Manage scheduled tasks\n' +
+    '/team - Multi-agent team collaboration\n' +
     '💡 *Tips*\n' +
     '• /vault works with keywords or natural language\n' +
-    '• Examples: /vault AI agents, /vault how to build bots'
+    '• Examples: /vault AI agents, /vault how to build bots\n' +
+    '• Conversations timeout after 10 min of inactivity\n' +
+    '• Long-term memory persists across sessions'
   );
 }
 
@@ -371,6 +496,9 @@ async function handleVault(phone, text) {
     return waSend(phone, '🔍 *Vault Search*\n\n/vault <keyword> - Search your knowledge graph\nExample: /vault AI agents\n\nWorks with both keywords and natural language.');
   }
   if (query.length < 2) return waSend(phone, 'Query too short. Try /vault <keyword>');
+
+  // Track user interest
+  trackInterest(phone, query, 'search');
 
   // Get initial results
   let result = await searchVault(query);
@@ -1219,37 +1347,232 @@ async function callGroq(systemMsg, query, vaultContext, timeoutMs) {
   return content;
 }
 
-// ─── #3a: Parallel Multi-LLM Ensemble ─────────────────
+// ─── #3a: Unified Multi-LLM Ensemble ─────────────────
+// Runs ALL available providers in parallel: API (NVIDIA, Groq, MiniMax) + CLI (claude, gemini, opencode, codex)
+// Auto-detects which CLI tools are installed; skips missing ones silently.
+
+const { execSync } = require('child_process');
+
+// ── CLI tool registry ──────────────────────────────────
+// Each entry: { name, cmd, argsFn(prompt), checkCmd }
+// checkCmd is used to test if the CLI is installed
+const CLI_TOOLS = [
+  {
+    name: 'Claude',
+    cmd: 'claude',
+    check: 'claude --version 2>/dev/null',
+    args: (p) => ['-p', p, '--output-format', 'text', '--no-stream'],
+  },
+  {
+    name: 'Gemini',
+    cmd: 'gemini',
+    check: 'gemini --version 2>/dev/null',
+    args: (p) => ['--prompt', p],
+  },
+  {
+    name: 'OpenCode',
+    cmd: 'opencode',
+    check: 'opencode --version 2>/dev/null',
+    args: (p) => ['--prompt', p],
+  },
+  {
+    name: 'Codex',
+    cmd: 'codex',
+    check: 'codex --version 2>/dev/null',
+    args: (p) => ['--prompt', p],
+  },
+];
+
+// Cache which CLI tools are available (checked once at startup)
+let cliAvailable = null;
+function detectCliTools() {
+  if (cliAvailable) return cliAvailable;
+  cliAvailable = {};
+  for (const tool of CLI_TOOLS) {
+    try {
+      execSync(tool.check, { stdio: 'pipe', timeout: 5000 });
+      cliAvailable[tool.name] = true;
+      console.log('✅ CLI available: ' + tool.name);
+    } catch {
+      cliAvailable[tool.name] = false;
+      console.log('⏭️  CLI not found: ' + tool.name);
+    }
+  }
+  return cliAvailable;
+}
+
+// ── Generic CLI caller ────────────────────────────────
+async function callCLI(tool, prompt, timeoutMs) {
+  const timeout = timeoutMs || 30000;
+  const args = tool.args(prompt);
+  console.log('🔧 Calling ' + tool.name + ' CLI (timeout=' + timeout + 'ms)...');
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const { spawn } = require('child_process');
+      const child = spawn(tool.cmd, args, { shell: false });
+      let stdout = '';
+      let stderr = '';
+      const timer = setTimeout(() => {
+        child.kill('SIGTERM');
+        reject(new Error(tool.name + ' CLI timed out after ' + timeout + 'ms'));
+      }, timeout);
+      child.stdout.on('data', d => { stdout += d; });
+      child.stderr.on('data', d => { stderr += d; });
+      child.on('error', e => { clearTimeout(timer); reject(e); });
+      child.on('exit', code => {
+        clearTimeout(timer);
+        if (code === 0) resolve(stdout.trim());
+        else reject(new Error(tool.name + ' CLI exit ' + code + ': ' + stderr.slice(0, 200)));
+      });
+    });
+    console.log('🔧 ' + tool.name + ' CLI response: ' + (result ? result.length : 0) + ' chars');
+    return result;
+  } catch (e) {
+    console.error('❌ ' + tool.name + ' CLI error:', e.message);
+    return null;
+  }
+}
+
+// ── API callers ────────────────────────────────────────
+// callNvidia and callGroq already defined above
+
+async function callMiniMax(systemMsg, query, vaultContext, timeoutMs) {
+  const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || '';
+  const MINIMAX_GROUP_ID = process.env.MINIMAX_GROUP_ID || '';
+  const MINIMAX_MODEL = process.env.MINIMAX_MODEL || 'abab6.5-chat';
+  if (!MINIMAX_API_KEY || !MINIMAX_GROUP_ID) {
+    console.error('⏭️  MiniMax: MINIMAX_API_KEY or MINIMAX_GROUP_ID not set');
+    return null;
+  }
+  const timeout = timeoutMs || 30000;
+  console.log('🟣 Fetching MiniMax (timeout=' + timeout + 'ms)...');
+  try {
+    const res = await fetch('https://api.minimax.chat/v1/text_completion', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + MINIMAX_API_KEY,
+      },
+      body: JSON.stringify({
+        model: MINIMAX_MODEL,
+        messages: [
+          { role: 'system', content: systemMsg },
+          { role: 'user', content: vaultContext + '\n\nQuestion: ' + query },
+        ],
+        max_tokens: 2000,
+        temperature: 0.7,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(timeout),
+    });
+    console.log('🟣 MiniMax status:', res.status);
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('❌ MiniMax HTTP ' + res.status + ':', errText.slice(0, 100));
+      return null;
+    }
+    const data = await res.json();
+    const content = data?.answer || data?.choices?.[0]?.message?.content || null;
+    console.log('🟣 MiniMax content length:', content ? content.length : 0);
+    return content;
+  } catch (e) {
+    console.error('❌ MiniMax error:', e.message);
+    return null;
+  }
+}
+
+// ── Unified ensemble ───────────────────────────────────
 async function callMultipleLLMs(systemMsg, query, vaultContext) {
-  console.log('🤖 Running ensemble (NVIDIA + Groq in parallel)...');
-  const [nv, gr] = await Promise.allSettled([
-    callNvidia(systemMsg, query, vaultContext, 30000),
-    callGroq(systemMsg, query, vaultContext, 25000)
-  ]);
-  const nvidia = nv.status === 'fulfilled' ? nv.value : null;
-  const groq = gr.status === 'fulfilled' ? gr.value : null;
-  return { nvidia, groq };
+  const avail = detectCliTools();
+  const prompt = systemMsg + '\n\n' + vaultContext + '\n\nQuestion: ' + query;
+
+  // Build all provider promises
+  const tasks = [];
+  const labels = [];
+
+  // API providers (always attempted)
+  tasks.push(callNvidia(systemMsg, query, vaultContext, 30000));
+  labels.push('NVIDIA');
+  tasks.push(callGroq(systemMsg, query, vaultContext, 25000));
+  labels.push('Groq');
+  tasks.push(callMiniMax(systemMsg, query, vaultContext, 30000));
+  labels.push('MiniMax');
+
+  // CLI providers (only if detected)
+  for (const tool of CLI_TOOLS) {
+    if (avail[tool.name]) {
+      tasks.push(callCLI(tool, prompt, 30000));
+      labels.push(tool.name);
+    }
+  }
+
+  console.log('🤖 Ensemble: ' + labels.length + ' providers [' + labels.join(', ') + ']...');
+  const settled = await Promise.allSettled(tasks);
+
+  // Collect results
+  const results = {};
+  for (let i = 0; i < labels.length; i++) {
+    const r = settled[i];
+    results[labels[i]] = r.status === 'fulfilled' ? r.value : null;
+  }
+
+  // Log summary
+  const ok = labels.filter(l => results[l]);
+  const fail = labels.filter(l => !results[l]);
+  console.log('🤖 Ensemble done: ' + ok.length + ' ok [' + ok.join(', ') + '], ' + fail.length + ' failed [' + fail.join(', ') + ']');
+  return results;
 }
 
 function mergeResults(results) {
-  const { nvidia, groq } = results;
-  if (!nvidia && !groq) return { best: null, from: 'none' };
-  if (!nvidia) return { best: groq, from: 'Groq' };
-  if (!groq) return { best: nvidia, from: 'NVIDIA' };
-  // Pick the longer/more detailed response
-  if (nvidia.length >= groq.length) return { best: nvidia, from: 'NVIDIA' };
-  return { best: groq, from: 'Groq' };
+  const providers = ['NVIDIA', 'Groq', 'MiniMax', 'Claude', 'Gemini', 'OpenCode', 'Codex'];
+  const available = providers.filter(p => results[p]);
+  if (available.length === 0) return { best: null, from: 'none', all: results };
+
+  // Pick the longest response (simple heuristic)
+  let best = available[0];
+  for (const p of available) {
+    if (results[p] && results[best] && results[p].length > results[best].length) {
+      best = p;
+    }
+  }
+  const others = available.filter(p => p !== best);
+  return { best: results[best], from: best, others, all: results };
 }
 
 async function handleEnsemble(phone, text) {
   const query = text.replace(/^\/ensemble\s*/i, '').trim();
-  if (!query) return waSend(phone, 'Usage: /ensemble <question>\n\nRuns NVIDIA + Groq in parallel and picks the best answer.');
+  if (!query) {
+    const avail = detectCliTools();
+    const cliList = CLI_TOOLS.filter(t => avail[t.name]).map(t => t.name).join(', ') || 'none';
+    return waSend(phone,
+      'Usage: /ensemble <question>\n\n' +
+      'Runs ALL available models in parallel:\n' +
+      '🔵 API: NVIDIA, Groq, MiniMax\n' +
+      '🔧 CLI: ' + cliList + '\n\n' +
+      'Picks the best answer automatically.');
+  }
   await waSend(phone, '🤖 Running ensemble for: "' + query.slice(0, 60) + '"...');
-  const results = await callMultipleLLMs('You are OmniClaw AI. Answer directly and specifically.', query, '');
-  const { best, from } = mergeResults(results);
-  if (!best) return waSend(phone, '❌ Both models failed. Try again later.');
-  const other = from === 'NVIDIA' ? 'Groq' : 'NVIDIA';
-  await waSend(phone, '🤖 *Ensemble Answer*\n\n' + best.slice(0, 3500) + '\n\n_ℹ️ Picked from ' + from + ' (also checked ' + other + ')_');
+  const results = await callMultipleLLMs(
+    'You are OmniClaw AI. Answer directly and specifically.',
+    query,
+    ''
+  );
+  const { best, from, others } = mergeResults(results);
+  if (!best) return waSend(phone, '❌ All models failed. Try again later.');
+
+  // Build provider status line
+  const allKeys = Object.keys(results);
+  const statusLine = allKeys.map(k => {
+    const icon = results[k] ? '✅' : '❌';
+    return icon + ' ' + k;
+  }).join(' ');
+
+  await waSend(phone,
+    '🤖 *Ensemble Answer*\n\n' +
+    best.slice(0, 3500) +
+    '\n\n_ℹ️ Picked from *' + from + '* (also checked ' + (others || []).join(', ') + ')_' +
+    '\n_' + statusLine + '_'
+  );
 }
 
 // ─── #3: Hyperagent Multi-Model Router ─────────────────
@@ -1324,6 +1647,16 @@ async function handleAgent(phone, text) {
   const query = text.replace(/^\/(ask|agent)\s*/i, '').trim();
   if (!query) return waSend(phone, 'Usage: /ask <question>\n\nI generate AI-powered answers with optional vault context.');
   
+  // Update activity and check timeout
+  updateLastActivity(phone);
+  if (isConversationExpired(phone)) {
+    await waSend(phone, '⏰ *Session timeout*\n\nPrevious context cleared for privacy. Starting fresh!');
+    resetConversation(phone);
+  }
+  
+  // Show typing indicator
+  await showTyping(phone, true);
+  
   // Step 1: Load cross-platform context
   await syncContextFromGCS(phone);
   
@@ -1340,7 +1673,11 @@ async function handleAgent(phone, text) {
       if (relevant.length > 0) {
         vaultContext = await buildVaultContext(relevant);
         const count = vaultContext.match(/\[\d+\]/g)?.length || 0;
-        if (count > 0) await waSend(phone, '📚 Found ' + count + ' bookmarks as context.');
+        if (count > 0) {
+          await waSend(phone, '📚 Found ' + count + ' bookmarks as context.');
+          // Track interest when vault content is used
+          trackInterest(phone, query, 'click');
+        }
       }
     } catch (e) { console.error('❌ Vault search error:', e.message); }
   }
@@ -1349,21 +1686,32 @@ async function handleAgent(phone, text) {
   
   // Step 3: Build system prompt with conversation memory
   const hasVaultContent = vaultContext.includes('[');
-  const convContext = getMemoryContext(phone);
+  const shortContext = getMemoryContext(phone);
+  const longContext = getLongTermContext(phone);
   const systemMsg = hasVaultContent
     ? "You are OmniClaw AI. The vault bookmarks below ARE relevant. For each bookmark you reference, include its source URL on a new line. Format: [N] idea...\\n🔗 <url>. Use **bold** for emphasis."
     : "You are OmniClaw AI - direct, specific. OmniClaw ALREADY has: Telegram bot, WhatsApp bot, Alexa skill, web dashboard, LLM integration, FAISS vault search, persistent memory, TTS, story generation, Growth OS dashboards, TreeQuest multi-agent ensemble, autonomous research loops, social ingestion, Redis, GCS. All on Cloud Run.\\n\\nDo NOT suggest things it already has. Suggest what it does NOT have yet. Format: numbered list with **bold title** + 1 sentence. Direct, no fluff.";
   
-  const userMsg = (convContext ? 'Recent conversation:\n' + convContext + '\n\n' : '') + vaultContext;
+  const userMsg = (longContext ? '[Older conversation]\n' + longContext + '\n\n' : '') + 
+                   (shortContext ? '[Recent context]\n' + shortContext + '\n\n' : '') + vaultContext;
   
   // Step 4: Call LLM with memory
-  console.log('🤖 Asking LLM (vault=' + hasVaultContent + ', memory=' + !!convContext + ')...');
+  console.log('🤖 Asking LLM (vault=' + hasVaultContent + ', short=' + !!shortContext + ', long=' + !!longContext + ')...');
   try {
     const answer = await askLLM(systemMsg, query, userMsg);
+    await showTyping(phone, false);
+    
     if (answer) {
       await waSend(phone, '🤖 *Answer*\n\n' + answer.slice(0, 3500));
+      
+      // Update short-term memory
       addToMemory(phone, 'user', query);
       addToMemory(phone, 'assistant', answer.slice(0, 500));
+      
+      // Update long-term memory
+      addToLongTermMemory(phone, 'user', query);
+      addToLongTermMemory(phone, 'assistant', answer.slice(0, 500));
+      
       syncContextToGCS(phone, conversationMemory.get(phone) || []);
       trackPromptQuality(phone, query, true, false);
       console.log('📨 Answer sent (NVIDIA)');
@@ -1372,6 +1720,7 @@ async function handleAgent(phone, text) {
       await waSend(phone, '🤖 Could not generate answer. Try rephrasing.');
     }
   } catch (e) {
+    await showTyping(phone, false);
     console.error('❌ LLM error:', e.message);
     await waSend(phone, '🤖 Could not generate answer right now.');
   }
@@ -1394,6 +1743,8 @@ function isVaultRelevant(query, items) {
 }
 
 async function handleAgentWithContext(phone, query, vaultItems) {
+  updateLastActivity(phone);
+  
   const vaultRelevant = isVaultRelevant(query, vaultItems);
   const vaultContext = await buildVaultContext(vaultItems);
   const count = vaultContext.match(/\[\d+\]/g)?.length || 0;
@@ -1401,24 +1752,50 @@ async function handleAgentWithContext(phone, query, vaultItems) {
   const hasVaultContent = vaultRelevant && count > 0;
   
   if (hasVaultContent) {
+    await showTyping(phone, true);
     await waSend(phone, '📚 Found ' + count + ' relevant vault bookmarks. Generating answer...');
   }
   
+  // Check for conversation timeout
+  if (isConversationExpired(phone)) {
+    await waSend(phone, '⏰ *Conversation timeout*\n\nStarting fresh! Previous context cleared for privacy.');
+    resetConversation(phone);
+  }
+  
   await syncContextFromGCS(phone);
-  const convContext = getMemoryContext(phone);
-  const userMsg = (convContext ? 'Recent conversation:\n' + convContext + '\n\n' : '') + vaultContext;
+  const shortContext = getMemoryContext(phone);
+  const longContext = getLongTermContext(phone);
+  const userMsg = (longContext ? '[Older conversation]\n' + longContext + '\n\n' : '') + 
+                   (shortContext ? '[Recent context]\n' + shortContext + '\n\n' : '') + vaultContext;
   
   const systemMsg = hasVaultContent
     ? "You are OmniClaw AI. The vault bookmarks below ARE relevant. For each bookmark you reference, include its source URL on its own line. Format: [N] idea...\\n🔗 <url>. Use **bold** for emphasis."
     : "You are OmniClaw AI - direct, specific. OmniClaw ALREADY has: Telegram bot, WhatsApp bot, Alexa skill, web dashboard, LLM integration, FAISS vault search, persistent memory, TTS, story generation, Growth OS dashboards, TreeQuest multi-agent ensemble, autonomous research loops, social ingestion, Redis, GCS. All on Cloud Run.\\n\\nDo NOT suggest things it already has. Suggest what it does NOT have yet. Format: numbered list with **bold title** + 1 sentence. Direct, no fluff.";
   
-  console.log('🤖 Asking LLM (vault=' + hasVaultContent + ', memory=' + !!convContext + ')...');
+  console.log('🤖 Asking LLM (vault=' + hasVaultContent + ', short=' + !!shortContext + ', long=' + !!longContext + ')...');
+  
+  // Show typing indicator
+  await showTyping(phone, true);
+  
   try {
     const answer = await askLLM(systemMsg, query, userMsg);
+    await showTyping(phone, false);
+    
     if (answer) {
       await waSend(phone, '🤖 *Answer*\n\n' + answer.slice(0, 3500));
+      
+      // Update both short and long-term memory
       addToMemory(phone, 'user', query);
       addToMemory(phone, 'assistant', answer.slice(0, 500));
+      addToLongTermMemory(phone, 'user', query);
+      addToLongTermMemory(phone, 'assistant', answer.slice(0, 500));
+      
+      // Update conversation summary for memory
+      if (!longTermMemory[phone]) longTermMemory[phone] = { history: [], summary: '' };
+      if (query.length > 10 && !longTermMemory[phone].summary) {
+        longTermMemory[phone].summary = query.slice(0, 50);
+      }
+      
       syncContextToGCS(phone, conversationMemory.get(phone) || []);
       trackPromptQuality(phone, query, true, false);
     } else {
@@ -1426,9 +1803,76 @@ async function handleAgentWithContext(phone, query, vaultItems) {
       await waSend(phone, 'Could not generate answer right now.');
     }
   } catch (e) {
+    await showTyping(phone, false);
     console.error('❌ LLM error:', e.message);
     await waSend(phone, '⚠️ AI temporarily unavailable.');
   }
+}
+
+// ─── Conversation Reset & Memory Commands ───────────────────────
+async function handleReset(phone) {
+  updateLastActivity(phone);
+  resetConversation(phone);
+  await waSend(phone, '✅ *Conversation reset*\n\nShort-term and long-term memory cleared. Starting fresh!');
+}
+
+async function handleMemory(phone) {
+  updateLastActivity(phone);
+  const memory = longTermMemory[phone];
+  const history = memory?.history || [];
+  
+  if (history.length === 0) {
+    return waSend(phone, '📚 *Your conversation history is empty*\n\nStart chatting and I\'ll remember our conversation.');
+  }
+  
+  // Check if conversation expired
+  if (isConversationExpired(phone)) {
+    await waSend(phone, '⏰ *Conversation expired*\n\nYour session timed out. Previous messages cleared. Start fresh!');
+    resetConversation(phone);
+    return;
+  }
+  
+  const lines = ['📚 *Recent conversation* (' + history.length + ' messages)\n'];
+  for (const msg of history.slice(-10)) {
+    const role = msg.role === 'user' ? '👤 You' : '🤖 Bot';
+    const time = new Date(msg.ts).toLocaleTimeString();
+    const content = msg.content.slice(0, 100).replace(/\n/g, ' ');
+    lines.push('\n' + role + ' [' + time + ']\n' + content + (msg.content.length > 100 ? '...' : ''));
+  }
+  
+  const summary = memory.summary || 'No summary yet';
+  lines.push('\n\n💡 *Topic*: ' + summary);
+  
+  await waSend(phone, lines.join('\n'));
+}
+
+async function handleInterests(phone) {
+  updateLastActivity(phone);
+  const interests = getUserInterests(phone);
+  
+  if (!interests || interests.totalQueries === 0) {
+    return waSend(phone, '[brain] *Your Interest Profile*\n\nNo data yet! Start using /vault or /ask to search topics you care about.\n\nI will build your taste profile over time.');
+  }
+  
+  const lines = ['[brain] *Your Interest Profile*\n'];
+  lines.push('\n>> *Top Topics*:\n');
+  for (const { topic, score } of interests.topTopics) {
+    const bars = '#'.repeat(Math.min(10, Math.round(score / 2)));
+    lines.push('  ' + bars + ' ' + topic + ' (' + score + ')');
+  }
+  
+  lines.push('\n>> *Activity*: ' + interests.totalQueries + ' searches');
+  if (interests.lastActive) {
+    const last = new Date(interests.lastActive);
+    lines.push('\n>> *Last active*: ' + last.toLocaleString());
+  }
+  
+  const suggestion = getPersonalizedSuggestions(phone);
+  if (suggestion) {
+    lines.push('\n\nTIP: Try /vault ' + suggestion.suggestedTopic);
+  }
+  
+  await waSend(phone, lines.join('\n'));
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1441,7 +1885,7 @@ async function handleIncomingMessage(senderPhone, senderName, messageText, chatI
   text = text.replace(/@omniclaw\\s*/gi, '').trim();
   text = text.replace(/@\\d+\\s*/g, '').trim();
 
-  const phone = chatIdOverride || senderPhone;
+  let phone = chatIdOverride || senderPhone;
   const fromName = senderName || 'there';
   if (!text || !phone) return;
 
@@ -1449,8 +1893,14 @@ async function handleIncomingMessage(senderPhone, senderName, messageText, chatI
 
   if (!checkRate(phone)) return waSend(phone, '⏱ Please slow down! Max ' + MAX_PER_MINUTE + ' requests per minute.');
 
-  // ─── Group admin check - block sensitive commands for non-admins in groups
+  // ─── Group whitelist check — silently ignore non-whitelisted groups ───
   const isGroup = phone && phone.includes('@g.us');
+  if (isGroup && ALLOWED_GROUPS.length > 0 && !ALLOWED_GROUPS.includes(phone)) {
+    console.log('⛔ Group not in ALLOWED_GROUPS, ignoring: ' + phone);
+    return; // Silent drop — no response, no quota use
+  }
+
+  // ─── Group admin check - block sensitive commands for non-admins in groups
   const blockedCommands = ['/drafts', '/growthos', '/remind', '/story', '/tts'];
   if (isGroup && !ADMIN_PHONES.includes(senderPhone)) {
     for (const cmd of blockedCommands) {
@@ -1460,9 +1910,25 @@ async function handleIncomingMessage(senderPhone, senderName, messageText, chatI
     }
   }
 
+  // ─── Outbound group check — override phone to null for non-whitelisted groups ───
+  // This ensures ALL waSend(phone, ...) calls silently fail (null chatId) for non-Outbound groups
+  // Personal DMs always work. Groups: only send if in OUTBOUND_GROUPS (or OUTBOUND_GROUPS is empty = allow all)
+  const effectivePhone = (isGroup && OUTBOUND_GROUPS.length > 0 && !OUTBOUND_GROUPS.includes(phone)) ? null : phone;
+  // Swap: make all waSend use effectivePhone instead of phone
+  phone = effectivePhone;
+
+  // Guard: if phone is null/invalid, silently return (group not in outbound whitelist)
+  if (!phone) {
+    console.log('⛔ Outbound group not in OUTBOUND_GROUPS, skipping response: ' + chatIdOverride);
+    return;
+  }
+
   // ─── Commands ──
   if (text === '/start') return handleStart(phone, fromName);
   if (text === '/help') return handleHelp(phone);
+  if (text === '/reset') return handleReset(phone);
+  if (text === '/memory') return handleMemory(phone);
+  if (text === '/interests') return handleInterests(phone);
   if (text.startsWith('/status')) return handleStatus(phone);
   if (text.startsWith('/vault')) return handleVault(phone, text);
   if (text.startsWith('/sync')) return handleSync(phone);
@@ -1609,6 +2075,42 @@ setInterval(() => {
     }
   } catch(e) { console.error('❌ Reminder interval error:', e.message); }
 }, 30000);
+
+// ═══════════════════════════════════════════════════════
+//  SCHEDULE CHECKER (runs every minute)
+// ═══════════════════════════════════════════════════════
+setInterval(async () => {
+  try {
+    const scheds = JSON.parse(fs.readFileSync('/tmp/omniclaw_wa_schedules.json', 'utf8') || '[]');
+    const nowDate = new Date();
+    for (const s of scheds) {
+      if (!s.enabled || !s.phone) continue;
+      const nextRun = s.nextRun ? new Date(s.nextRun) : null;
+      if (!nextRun || nextRun <= nowDate) {
+        console.log('[SCHEDULE] Running: ' + s.task + ' - ' + (s.params?.topic || ''));
+        if (s.task === 'digest' && s.params?.topic) {
+          await handleDigest(s.phone, '/digest ' + s.params.topic).catch(e => console.error('[SCHEDULE] Digest failed:', e.message));
+        } else if (s.task === 'ask' && s.params?.query) {
+          await handleAgent(s.phone, '/ask ' + s.params.query).catch(e => console.error('[SCHEDULE] Ask failed:', e.message));
+        }
+        // Update next run
+        if (s.interval === 'daily') {
+          // Time is in IST (UTC+5:30). 09:00 IST = 03:30 UTC
+          const next = new Date(nowDate);
+          next.setDate(next.getDate() + 1);
+          const [h, m] = (s.time || '09:00').split(':');
+          const istHour = parseInt(h), istMin = parseInt(m);
+          // Convert IST to UTC
+          next.setUTCHours(istHour - 5, istMin - 30, 0, 0);
+          if (istMin < 30) next.setUTCHours(istHour - 6, istMin + 30, 0, 0);
+          s.nextRun = next.toISOString();
+          s.lastRun = nowDate.toISOString();
+        }
+      }
+    }
+    fs.writeFileSync('/tmp/omniclaw_wa_schedules.json', JSON.stringify(scheds));
+  } catch(e) { /* best-effort */ }
+}, 60000);
 
 // ─── Free-text rate limiter cleanup ────────────────────
 setInterval(() => {
