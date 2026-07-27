@@ -1,5 +1,5 @@
 {
-  "last_run": "2026-07-25T22:30:05.602717+00:00",
+  "last_run": "2026-07-27T05:33:46.539710+00:00",
   "errors": [
     {
       "stage": "twitter",
@@ -7,11 +7,18 @@
       "error_detail": "Scrape timed out after 90s — may need auth refresh",
       "action_required": "",
       "timestamp": "2026-07-04T04:06:38.772660+00:00"
+    },
+    {
+      "stage": "export",
+      "error_code": "EXPORT_ERROR",
+      "error_detail": "Exit code: 1",
+      "action_required": "",
+      "timestamp": "2026-07-27T05:34:02.489771+00:00"
     }
   ],
   "schema_version": "2.0",
   "pipeline_version": "2.0.0",
-  "_written_at": "2026-07-25T22:30:31.605560+00:00",
+  "_written_at": "2026-07-27T05:34:02.550777+00:00",
   "stages": {
     "ingest": {
       "status": "ok"
@@ -20,7 +27,9 @@
       "status": "ok"
     },
     "export": {
-      "status": "ok"
+      "status": "error",
+      "error_code": "EXPORT_ERROR",
+      "error_detail": "Exit code: 1"
     },
     "enrich": {
       "status": "background_launched",
@@ -37,6 +46,6 @@
       "error_detail": "Scrape timed out after 90s"
     }
   },
-  "last_success": "2026-07-25T22:30:31.575864+00:00",
-  "duration_sec": 28.0
+  "last_success": "2026-07-27T05:34:02.520809+00:00",
+  "duration_sec": 25418.0
 }
