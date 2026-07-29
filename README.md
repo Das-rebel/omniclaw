@@ -14,8 +14,18 @@
 <a href="https://github.com/Das-rebel/omniclaw"><img src="https://img.shields.io/github/repo-size/Das-rebel/omniclaw?style=flat-square&logo=github" alt="Repo size"></a>
 <img src="https://img.shields.io/github/languages/code-size/Das-rebel/omniclaw?style=flat-square&logo=github" alt="Language count">
 <a href="https://github.com/Das-rebel/omniclaw/stargazers"><img src="https://img.shields.io/github/stars/Das-rebel/omniclaw?style=flat-square&logo=github" alt="Stars"></a>
+<a href="https://www.npmjs.com/package/adaptive-memory-multi-model-router"><img src="https://img.shields.io/npm/dt/adaptive-memory-multi-model-router?style=flat-square&logo=npm" alt="npm downloads"></a>
 
 > **Unified AI assistant platform with multi-channel support (Alexa, WhatsApp, Telegram, Hindi/Bengali/Hinglish). Multi-provider LLM orchestration: 8+ models (OpenAI, Anthropic, Gemini, Groq, Cerebras, Ollama, LM Studio, vLLM).**
+
+### 📊 By the Numbers
+
+| Metric | Value |
+|--------|------:|
+| **npm downloads** | **31,184** |
+| Daily average | ~410/day |
+| Days active | 76 |
+| npm trend | 📈 growing |
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
