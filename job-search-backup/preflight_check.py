@@ -8,14 +8,10 @@ TRACKER = '/Users/Subho/Desktop/applied_companies_tracker.json'
 
 # Word-boundary matched exclusions
 EXCLUDE_COMPANIES = {
-    # Big Tech / Big Finance
-    'amazon', 'google', 'microsoft', 'meta', 'facebook', 'twitter', 'netflix',
-    'apple', 'snap', 'pinterest', 'reddit', 'quora', 'dropbox', 'box',
-    'flipkart', 'swiggy', 'zomato', 'ola', 'lyft', 'uber', 'meesho',
-    'phonepe', 'razorpay', 'cred', 'bharatpe', 'khatabook', 'groww',
-    'slice', 'niyo', 'airtel', 'jio',
+    # ONLY these two — all other big tech/finance allowed
+    'swiggy', 'groww',
     # Indian IT Services
-    'tcs', 'infosys', 'wipro', 'accenture', 'cognizant',
+    'infosys', 'wipro', 'accenture', 'cognizant',
     'hcl tech', 'tech mahindra', 'capgemini', 'mindtree', 'ltimindtree',
     'persistent', 'ltts',
     # EdTech / Schools
@@ -66,8 +62,14 @@ B2B_CONTEXT_WORDS = {
     'architect', 'designer'
 }
 
-SENIOR_KW = {'head', 'director', 'vp', 'vice president', 'chief', 'svp', 'evp', 'avp',
-              'founder', 'co-founder', 'owner', 'partner', 'managing director'}
+SENIOR_KW = {
+    # Leadership / C-suite
+    'head', 'director', 'vp', 'vice president', 'chief', 'svp', 'evp', 'avp',
+    'founder', 'co-founder', 'owner', 'partner', 'managing director',
+    'president', 'general', 'ad', 'associate director',
+    # Lead (as standalone title — "Growth Lead", "Marketing Lead")
+    'lead',
+}
 JUNIOR_KW = {'junior', 'intern', 'entry level', 'fresher', 'trainee', 'associate', 'executive'}
 
 # --- LOCATION RULE (user 2026-08-27) ---
@@ -97,11 +99,16 @@ def location_ok(loc=''):
         return True
     return None  # unknown location -> don't block
 
-def check(company, role=''):
+def check(company, role='', location=''):
     if not company or company.lower().strip() in ('unknown', 'none', '-', ''):
         return False, "EMPTY"
     cl = company.lower().strip()
     rl = (role or '').lower()
+
+    # 0. Location check
+    loc_result = location_ok(location)
+    if loc_result is False:
+        return False, f"TIER2_BLOCK:{location}"
 
     # 1. EXCLUDE_COMPANIES word-boundary
     for excl in EXCLUDE_COMPANIES:
@@ -139,11 +146,33 @@ def check(company, role=''):
         if cl == key or cl.startswith(key + ' ') or key.startswith(cl + ' '):
             return False, f"APPLIED:{key}"
 
-    # 6. Seniority check
-    has_senior = any(re.search(r'\b' + k + r'\b', rl) for k in SENIOR_KW)
+    # 6. Seniority check — MUST be senior leadership (Head/Director/VP/Chief/Lead/General/AD)
+    # Plain "senior X manager" does NOT count as senior (senior IC, not leadership)
     has_junior = any(re.search(r'\b' + k + r'\b', rl) for k in JUNIOR_KW)
-    if has_junior and not has_senior:
+    has_explicit_senior = any(re.search(r'\b' + k + r'\b', rl) for k in SENIOR_KW)
+    has_senior_word = 'senior' in rl
+    has_manager = 'manager' in rl
+    has_leadership = any(k in rl for k in [
+        'director', 'head', 'vp', 'chief', 'founder',
+        'owner', 'partner', 'president', 'managing',
+        'lead',      # "Growth Lead", "Marketing Lead" — senior IC or team lead
+        'general',   # "General Manager", "General Counsel"
+        'associate director',  # AD / Associate Director
+    ])
+
+    # "associate director" is a SENIOR title — override "associate" in JUNIOR_KW
+    has_assoc_director = 'associate director' in rl
+
+    if has_junior and not has_explicit_senior and not has_assoc_director:
         return False, f"R8_JUNIOR"
+    if has_explicit_senior:
+        pass  # has head/director/vp/chief/founder/lead/general/ad — PASS
+    elif has_senior_word and has_manager and not has_leadership:
+        return False, f"NOT_SENIOR:SENIOR_IC"  # "Senior X Manager" = senior IC, not leadership
+    elif has_manager and not has_leadership:
+        return False, f"NOT_SENIOR:MANAGER"  # "X Manager" = mid-level, not senior
+    elif not has_leadership:
+        return False, f"NOT_SENIOR:NO_LEADERSHIP"  # no head/director/VP/chief/lead/general/ad
 
     return True, None
 
