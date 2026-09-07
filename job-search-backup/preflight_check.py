@@ -168,7 +168,9 @@ def check(company, role='', location=''):
     if has_explicit_senior:
         pass  # has head/director/vp/chief/founder/lead/general/ad — PASS
     elif has_senior_word and has_manager and not has_leadership:
-        return False, f"NOT_SENIOR:SENIOR_IC"  # "Senior X Manager" = senior IC, not leadership
+        pass  # Leadership IC (Sr Brand Manager etc.) — ALLOWED per user
+    elif has_senior_word and not has_manager:
+        pass  # Senior IC (Sr Media Buyer, Sr Engineer etc.) — ALLOWED per user
     elif has_manager and not has_leadership:
         return False, f"NOT_SENIOR:MANAGER"  # "X Manager" = mid-level, not senior
     elif not has_leadership:
