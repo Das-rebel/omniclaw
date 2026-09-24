@@ -9,6 +9,28 @@
 **12 Built-in Skills (Matt Pocock framework)** — OmniClaw now exposes 12 engineering skills as slash commands: `/diagnose`, `/grill-me`, `/tdd`, `/to-issues`, `/to-prd`, `/triage`, `/improve-codebase-architecture`, `/write-a-skill`, `/zoom-out`, `/caveman`, `/fusion`, `/brainstorming-research-ideas`. **Why it matters:** For growth teams managing complex multi-step workflows, these skills turn OmniClaw into a research partner — not just a bot. Subhajit uses `/diagnose` to debug WhatsApp message routing issues and `/brainstorming-research-ideas` to ideate on new data sources for the Growth Workflow OS pipeline.
 
 **GCP Production Deployment (8+ LLM providers)** — OmniClaw routes across OpenAI, Anthropic, Gemini, Groq, Cerebras, Ollama, LM Studio, and vLLM simultaneously. Production URL: `dasomni-bot-338789220059.asia-south1.run.app`. **Why it matters:** For teams running multi-channel campaigns (WhatsApp + Telegram + Alexa), this single orchestration layer means Subhajit changes the LLM provider in one config file and it propagates across all channels — no per-channel updates. Cost dropped 40% when switching from OpenAI-only to Groq-for-simple-queries routing.
+### 🧠 Memory V3 — Temporal Knowledge Graph (NEW)
+
+**Sep 2026** — Persistent session memory with 3-layer architecture:
+
+| Layer | Description | Lines |
+|-------|-------------|------:|
+| **L0** | Append-only raw logs event store (WhatsApp sessions) | 118 |
+| **L1** | Entity extraction pipeline (5 fact types, confidence scoring) | 115 |
+| **L2** | Cross-session narrative reconstruction (JSON fact IDs) | 104 |
+| **L3** | Temporal knowledge graph (time-aware queries) | 160 |
+| **Schema** | L0-L3 tables + 5 performance indexes | 51 |
+
+**Key Capabilities:**
+- `getRecentContext` — Recover last N messages/context from any session
+- `getTopicHistory` — Track how topics evolve across sessions
+- `getNeverDiscussed` — Discover gaps in conversation history
+- `getTemporalGraph` — Full time-aware query engine
+- Sessions persist indefinitely; facts expire via `expires_at`
+
+**Integration:** Connects to WhatsApp bot via `apps/whatsapp/memory-v3/index.ts`
+
+---
 <a href="https://github.com/Das-rebel/omniclaw/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Das-rebel/omniclaw?style=flat-square&logo=github" alt="License MIT"></a>
 <a href="https://github.com/Das-rebel/omniclaw/actions"><img src="https://img.shields.io/github/actions/workflow/status/Das-rebel/omniclaw/ci.yml?style=flat-square&logo=github" alt="CI"></a>
 <a href="https://github.com/Das-rebel/omniclaw"><img src="https://img.shields.io/github/repo-size/Das-rebel/omniclaw?style=flat-square&logo=github" alt="Repo size"></a>
