@@ -70,6 +70,21 @@ SENIOR_KW = {
     # Lead (as standalone title — "Growth Lead", "Marketing Lead")
     'lead',
 }
+
+# Senior-level role signals (broadened for AI/Growth/Product roles)
+SENIOR_ROLE_SIGNALS = {
+    'founding', 'co-founder',  # Founding-level = equity + high autonomy
+    'specialist', 'strategist', 'architect',  # Senior IC titles
+    'demand gen', 'demand generation',  # Demand Gen is VP/Director level function
+    'gtm', 'go-to-market', 'go to market',  # GTM is inherently strategic
+    'ai-', 'ai ',  # AI-prefixed roles are senior specialist (AI Growth, AI PM, AI Marketing)
+    'native marketer', 'ai-native',  # AI-native roles are senior by definition
+    'growth strategist', 'product strategist',  # Strategist = senior IC
+    'category', 'vertical',  # Category roles are VP/Director
+}
+
+# Junior-level keywords — block unless explicit senior signal present
+JUNIOR_KW = {'junior', 'intern', 'entry level', 'fresher', 'trainee', 'associate', 'executive'}
 JUNIOR_KW = {'junior', 'intern', 'entry level', 'fresher', 'trainee', 'associate', 'executive'}
 
 # --- LOCATION RULE (user 2026-08-27) ---
@@ -137,7 +152,7 @@ def check(company, role='', location=''):
         tracker = json.load(f)
     applied = tracker.get('applied_companies', [])
     for a in applied:
-        al = a.lower()
+        al = (a.get('company', str(a)) if isinstance(a, dict) else str(a)).lower()
         if 'unknown' in al or len(al) < 4:
             continue
         key = al.split(' - ')[0].split(' (')[0].strip()
@@ -148,8 +163,11 @@ def check(company, role='', location=''):
 
     # 6. Seniority check — MUST be senior leadership (Head/Director/VP/Chief/Lead/General/AD)
     # Plain "senior X manager" does NOT count as senior (senior IC, not leadership)
+    # BUT: Founding/Specialist/Demand Gen/GTM/AI-prefixed roles ARE senior for AI Growth profile
     has_junior = any(re.search(r'\b' + k + r'\b', rl) for k in JUNIOR_KW)
-    has_explicit_senior = any(re.search(r'\b' + k + r'\b', rl) for k in SENIOR_KW)
+    has_explicit_senior = any(re.search(r'\b' + re.escape(k) + r'\b', rl) for k in SENIOR_KW)
+    # Also check broad senior role signals (founding, specialist, gtm, ai-, demand gen, etc.)
+    has_senior_signal = any(sig in rl for sig in SENIOR_ROLE_SIGNALS)
     has_senior_word = 'senior' in rl
     has_manager = 'manager' in rl
     has_leadership = any(k in rl for k in [
@@ -158,15 +176,20 @@ def check(company, role='', location=''):
         'lead',      # "Growth Lead", "Marketing Lead" — senior IC or team lead
         'general',   # "General Manager", "General Counsel"
         'associate director',  # AD / Associate Director
+        'founding',  # Founding-level = senior (equity + high autonomy)
+        'specialist',  # Senior IC title in product/growth contexts
+        'strategist',  # Senior IC
+        'demand gen', 'demand generation',  # VP/Director-level function
+        'gtm', 'go-to-market', 'go to market',  # Strategic function
     ])
 
     # "associate director" is a SENIOR title — override "associate" in JUNIOR_KW
     has_assoc_director = 'associate director' in rl
 
-    if has_junior and not has_explicit_senior and not has_assoc_director:
+    if has_junior and not has_explicit_senior and not has_senior_signal and not has_assoc_director:
         return False, f"R8_JUNIOR"
-    if has_explicit_senior:
-        pass  # has head/director/vp/chief/founder/lead/general/ad — PASS
+    if has_explicit_senior or has_senior_signal:
+        pass  # has head/director/vp/chief/founder/lead/general/ad/specialist/gtm/ai- — PASS
     elif has_senior_word and has_manager and not has_leadership:
         pass  # Leadership IC (Sr Brand Manager etc.) — ALLOWED per user
     elif has_senior_word and not has_manager:
