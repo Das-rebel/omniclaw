@@ -44,9 +44,10 @@
 
 | Metric | Value |
 |--------|------:|
-| **npm downloads** | **31,184** |
-| Daily average | ~410/day |
-| Days active | 76 |
+| **npm downloads** | **49,493** |
+| **Monthly run rate** | **Aug: 4,392 · Sep: 11,944 · Oct: 1,301** |
+| Daily average | ~361/day |
+| Days active | 137 (since May 15, 2026) |
 | npm trend | 📈 growing |
 
 ```
