@@ -221,7 +221,7 @@ def extract_cookies(browser: str, domain: Optional[str] = None) -> Dict:
             cookies = [c for c in cookies if domain in c.domain]
         return {
             "cookies": [{"name": c.name, "value": c.value, "domain": c.domain, "path": c.path,
-                         "secure": c.secure, "httpOnly": getattr(c, 'httponly', False),
+                         "secure": bool(c.secure), "httpOnly": bool(getattr(c, 'httponly', False)),
                          "sameSite": getattr(c, 'samesite', 'None')} for c in cookies],
             "count": len(cookies), "browser": browser, "domain": domain,
         }
