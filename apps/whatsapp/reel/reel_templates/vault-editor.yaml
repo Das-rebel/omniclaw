@@ -1,0 +1,65 @@
+id: vault-editor
+version: 1
+identity: {name: "Vault Editor", mood: kinetic, pace: fast, motion_intensity: 8}
+# vault-mined design laws (Oct 2026 mining):
+# - brand law: ONE signature look (dark + green = OmniClaw identity, supabase-green taste signal)
+# - flash-cut hook in first 2s (effects.flash_hook)
+# - photo visible within 2s (stat scene pip: best-saved photo card)
+# - sound design on transitions (engine whoosh), springy pop entrances (Duolingo/Rive bookmark)
+# - 45s target: min_hold 2.6, hook window 1.2
+persona_accents:
+  - "76,220,156"
+  - "150,220,255"
+  - "255,190,120"
+palette:
+  bg0: "10,12,20"
+  bg1: "16,19,32"
+  accent: "76,220,156"
+  white: "245,245,250"
+  dim: "120,125,140"
+  dim2: "85,90,108"
+  card: "22,26,42"
+  red: "255,90,90"
+  grain: 3
+  vignette: 0.38
+fonts: {display: BebasNeue, heavy: ArchivoBlack, body: Poppins-SemiBold, med: Poppins-Medium, mono: DejaVuSansMono}
+motion:
+  springs: {soft: [8.3, 9.0], bouncy: [14, 22]}
+  entrance: pop
+  stagger_s: 0.05
+  transition: {type: whip, frames: 9}
+  shimmer: {target: logo, dur: 2.0}
+  counter: spring_soft
+scenes:
+  stat:
+    headline: {y: 250, size: 80}
+    number: {x: 84, y: 460, size: 310}
+    label: {x: 92, y: 800, size: 44}
+    bars: {x: 90, y: 940, w: 900}
+    hint: {y: 1290}
+    chips: {y: 1360}
+    pip: {x: 640, y: 430, w: 360, h: 260}
+  save:
+    media: {y: 320, w: 860, h: 1000}
+    headline: {y: 1340, size: 56}
+    chips: {y: 1480}
+  outro:
+    headline: {y: 420, size: 80}
+    body: {y: 700, size: 46}
+    logo: {y: 1230, size: 220}
+    chips: {y: 1480}
+  defaults:
+    headline: {y: 420, size: 80}
+    body: {y: 700, size: 46}
+audio:
+  bed: {bpm: 92, gain: 0.24}
+  loudness: {i: -14, tp: -1.5, lra: 11}
+effects:
+  grade: {contrast: 1.08, saturation: 1.15}
+  flash_hook: true
+pacing:
+  hook_window_s: 1.2
+  min_hold_s: 2.6
+  captions: {max_words: 4, max_chars: 21, min_display_s: 0.5, tail_s: 0.2, y_off: 344}
+  safe: {y_max: 0.81}
+overrides: {max_deviation_ratio: 0.25, scene_overrides: []}

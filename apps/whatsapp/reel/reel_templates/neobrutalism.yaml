@@ -1,0 +1,65 @@
+id: neobrutalism
+flat_bg: true
+version: 1
+identity: {name: "Neobrutalism", mood: bold, pace: punchy, motion_intensity: 7}
+# neobrutalism per user request (Oct 2026): flat cream bg, thick black borders,
+# hard offset shadows (no blur), white cards, chunky ArchivoBlack, vermilion accent.
+# Engine gates: palette.flat=true -> solid bg; cards.style=brutal -> square corners
+# + hard shadows + 4px black outlines; flash_hook "r,g,b" = accent-colored frame-0 flash.
+persona_accents:
+  - "232,68,46"
+  - "24,24,28"
+  - "255,200,40"
+palette:
+  bg0: "247,241,229"
+  bg1: "247,241,229"
+  accent: "232,68,46"
+  white: "18,18,22"
+  dim: "72,72,82"
+  dim2: "110,110,120"
+  card: "255,255,255"
+  red: "200,30,30"
+  grain: 0
+  vignette: 0
+fonts: {display: BebasNeue, heavy: ArchivoBlack, body: Poppins-SemiBold, med: Poppins-Medium, mono: DejaVuSansMono}
+motion:
+  springs: {soft: [9.0, 9.5], bouncy: [16, 24]}
+  entrance: pop
+  stagger_s: 0.06
+  transition: {type: whip, frames: 8}
+  shimmer: {target: logo, dur: 2.0}
+  counter: spring_soft
+cards: {style: brutal, shadow: 8, border: 4}
+scenes:
+  stat:
+    headline: {y: 250, size: 80}
+    number: {x: 84, y: 460, size: 310}
+    label: {x: 92, y: 800, size: 44}
+    bars: {x: 90, y: 940, w: 900}
+    hint: {y: 1290}
+    chips: {y: 1360}
+    pip: {x: 640, y: 430, w: 360, h: 260}
+  save:
+    media: {y: 320, w: 860, h: 1000}
+    headline: {y: 1340, size: 56}
+    chips: {y: 1480}
+  outro:
+    headline: {y: 420, size: 80}
+    body: {y: 700, size: 46}
+    logo: {y: 1230, size: 220}
+    chips: {y: 1480}
+  defaults:
+    headline: {y: 420, size: 80}
+    body: {y: 700, size: 46}
+audio:
+  bed: {bpm: 90, gain: 0.22}
+  loudness: {i: -14, tp: -1.5, lra: 11}
+effects:
+  grade: {contrast: 1.0, saturation: 1.05}
+  flash_hook: "232,68,46"
+pacing:
+  hook_window_s: 1.2
+  min_hold_s: 2.6
+  captions: {max_words: 4, max_chars: 21, min_display_s: 0.5, tail_s: 0.2, y_off: 344}
+  safe: {y_max: 0.81}
+overrides: {max_deviation_ratio: 0.25, scene_overrides: []}
