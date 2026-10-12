@@ -182,12 +182,12 @@ function digestThree() {
   }).sort((a, b) => (b._hasMedia ? 1 : 0) - (a._hasMedia ? 1 : 0));
   const tw = mediaFirst(secRows('twitter', 40));
   // IG section: real posts/reels only — the IG scraper also files DM-request spam under source='instagram'
-  let ig = mediaFirst(secRows('instagram', 40)).filter(r => /instagram\.(com|co)\/(p|reel|tv)\//.test(r.url || ''));
-  // v7.3: when IG caption capture breaks upstream (rows have thumbs but no text), fall back to
-  // fresh thumb-bearing rows — enrichment OCRs their thumbnails so the LLM still gets copy.
-  if (!ig.some(r => (r.content || '').length > 80)) {
-    ig = mediaFirst(dbQuery("SELECT title, content, url, metadata, created_at FROM bookmarks WHERE is_active=1 AND source='instagram' AND title NOT LIKE 'dm%' AND metadata LIKE '%thumbnail_url%scontent%' AND (url LIKE '%/p/%' OR url LIKE '%/reel/%' OR url LIKE '%/tv/%') AND created_at >= datetime('now','-14 days') ORDER BY created_at DESC LIMIT 40")).filter(r => /instagram\.(com|co)\/(p|reel|tv)\//.test(r.url || ''));
-  }
+  // v7.3: IG section is RECENCY-FIRST, not text-first — recent saves carry thumbnails but
+  // captions are missing upstream; enrichment OCRs the thumb so the LLM still gets copy.
+  // Window widens 3d -> 10d -> legacy text-bearing rows only as a last resort.
+  let ig = mediaFirst(dbQuery("SELECT title, content, url, metadata, created_at FROM bookmarks WHERE is_active=1 AND source='instagram' AND title NOT LIKE 'dm%' AND metadata LIKE '%thumbnail_url%scontent%' AND (url LIKE '%/p/%' OR url LIKE '%/reel/%' OR url LIKE '%/tv/%') AND created_at >= datetime('now','-3 days') ORDER BY created_at DESC LIMIT 12")).filter(r => /instagram\.(com|co)\/(p|reel|tv)\//.test(r.url || ''));
+  if (!ig.length) ig = mediaFirst(dbQuery("SELECT title, content, url, metadata, created_at FROM bookmarks WHERE is_active=1 AND source='instagram' AND title NOT LIKE 'dm%' AND metadata LIKE '%thumbnail_url%scontent%' AND (url LIKE '%/p/%' OR url LIKE '%/reel/%' OR url LIKE '%/tv/%') AND created_at >= datetime('now','-10 days') ORDER BY created_at DESC LIMIT 12")).filter(r => /instagram\.(com|co)\/(p|reel|tv)\//.test(r.url || ''));
+  if (!ig.length) ig = mediaFirst(secRows('instagram', 40)).filter(r => /instagram\.(com|co)\/(p|reel|tv)\//.test(r.url || ''));
   let dmReal = null; const dmCounts = { inbox: 0, pending: 0 };
   try {
     const dmRows = dbQuery("SELECT title, content, url, metadata FROM bookmarks WHERE source_id LIKE 'dm:%' ORDER BY created_at DESC LIMIT 50");
