@@ -268,22 +268,30 @@ omniclaw/
 ├── apps/                          # User-facing entry points (channel adapters)
 │   ├── alexa/                     # 🎙️ Alexa Skill Handler (Node.js)
 │   │   ├── alexa_handler.js       # Main handler (with TMLPD)
-│   │   ├── alexa_handler_no_tmlpd.js
 │   │   ├── alexa_intent_router.js # Intent-based routing
 │   │   ├── alexa_response_builder.js
 │   │   ├── language/localization.js # Hindi/Bengali/Hinglish
 │   │   └── package.json
-│   ├── whatsapp/                  # 💬 WhatsApp Bridge (Baileys)
-│   │   ├── whatsapp_relay.js
-│   │   ├── session_manager.js
-│   │   └── message_processor.js
+│   ├── whatsapp/                  # 💬 WhatsApp Bridge (GoWA/Baileys)
+│   │   └── ...                    # GoWhatsApp relay + session management
 │   ├── telegram/                  # ✈️ Telegram Bot
 │   │   ├── telegram_bot.js
 │   │   ├── command_handlers.js
 │   │   └── inline_query_handler.js
-│   └── web/                       # 🌐 Web Interface (Express)
-│       ├── web_server.js
-│       └── static/
+│   ├── web/                       # 🌐 Web Interface (Express)
+│   │   └── ...
+│   ├── story-narrator/            # 🎧 Multi-TTS Story App (Kokoro + ElevenLabs)
+│   │   ├── src/index.js           # Express API server
+│   │   ├── kokoro/tts_server.py  # Kokoro-82M TTS engine
+│   │   ├── Dockerfile            # Node + Kokoro
+│   │   └── docker-compose.yml    # story-narrator + celebrity-tts
+│   ├── doc-grill/                 # 🔥 Doc Grill-Me System
+│   │   ├── index.js              # Express server
+│   │   ├── multillm-client.js    # Multi-LLM client
+│   │   └── public/               # Web UI
+│   └── finwipe-cloud/             # ☁️ Cloudflare Workers (Wipe/Analysis)
+│       ├── src/index.js
+│       └── wrangler.toml         # Workers + KV namespace config
 │
 ├── skills/                        # 🧠 AI Capabilities (Modular skill system)
 │   ├── browser/                   # 🌐 Browser Automation (MCP)
