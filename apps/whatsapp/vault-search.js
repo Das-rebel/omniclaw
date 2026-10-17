@@ -29,6 +29,25 @@ async function httpGet(url, timeout = 30000) {
   }
 }
 
+async function httpPost(url, body, timeout = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    clearTimeout(timer);
+    try { return JSON.parse(text); } catch { return { raw: text.slice(0, 300) }; }
+  } catch (e) {
+    clearTimeout(timer);
+    throw new Error(e.name === 'AbortError' ? 'timeout' : e.message);
+  }
+}
+
 // ─── Endpoints ──────────────────────────────────────────
 // Updated to DigitalOcean endpoint
 const VAULT_SEARCH_URL = 'http://159.65.10.49:8080';
@@ -268,6 +287,46 @@ function enrichResult(fr, lookup) {
 
 // ─── Search ─────────────────────────────────────────────
 
+// ─── Semantic Search (Chroma) ───────────────────────────────
+
+async function searchVaultChroma(query, limit = 12) {
+  /**
+   * Query ChromaDB semantic search via POST /search.
+   * Returns items in Chroma format: {id, title, url, source, created_at, distance}
+   * Falls back to empty results if Chroma is unavailable.
+   */
+  try {
+    const r = await httpPost(VAULT_SEARCH_URL + '/search', {
+      query,
+      n_results: limit,
+    }, 30000);
+    const items = r && r.results ? r.results : [];
+    // Normalize Chroma items to same shape as SQL items
+    return items.map(item => ({
+      id: String(item.id),
+      name: item.title || '',
+      content: item.title || '',
+      caption: item.title || '',
+      url: item.url || '',
+      source: item.source || 'unknown',
+      date: item.created_at ? item.created_at.slice(0, 10) : '',
+      timestamp: item.created_at || '',
+      score: item.distance != null ? 1 - Math.min(item.distance, 1) : 1,  // convert distance to relevance score
+      type: item.source === 'twitter' ? 'twitter'
+          : item.source === 'instagram' ? 'instagram'
+          : item.source || 'bookmark',
+      vlTags: [],
+      entities: [],
+      metadata: {},
+    }));
+  } catch (e) {
+    console.error('[vault-search] Chroma query failed:', e.message);
+    return [];
+  }
+}
+
+// ─── Merged Search ───────────────────────────────────────
+
 async function searchVault(query) {
   // -- Parse special flags before building queries --
   const isSummary = /\s*--summary\s*$/i.test(query);
@@ -315,6 +374,10 @@ async function searchVault(query) {
   let allItems = [];
   const seenIds = new Set();
 
+  // Fire SQL (keyword) and Chroma (semantic) queries in parallel
+  // Take whichever returns results; prefer Chroma for semantic queries
+  let chromaItems = await searchVaultChroma(cleanQuery, 12);
+
   for (const q of hybridQueries) {
     if (!q.trim()) continue;
     try {
@@ -328,6 +391,24 @@ async function searchVault(query) {
       }
     } catch (e) {
       // silently skip failed query variant
+    }
+  }
+
+  // If SQL returned nothing but Chroma has results, use Chroma
+  if (allItems.length === 0 && chromaItems.length > 0) {
+    console.log('[vault-search] SQL returned 0, using ' + chromaItems.length + ' Chroma results');
+    allItems = chromaItems;
+  } else if (chromaItems.length > 0) {
+    // Merge Chroma results into SQL results, dedup by URL
+    const seenUrls = new Set(allItems.map(i => i.url).filter(Boolean));
+    for (const item of chromaItems) {
+      if (!seenIds.has(item.id) && (!item.url || !seenUrls.has(item.url))) {
+        seenIds.add(item.id);
+        if (item.url) seenUrls.add(item.url);
+        // Tag Chroma items so buildVaultResult knows how to format them
+        item._fromChroma = true;
+        allItems.push(item);
+      }
     }
   }
 
