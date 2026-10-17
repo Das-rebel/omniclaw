@@ -18,82 +18,57 @@ def search_basic(q, limit=10):
     """Original basic search"""
     conn = sqlite3.connect(DB)
     cur = conn.cursor()
-    cur.execute(f"SELECT id, name, content, url FROM nodes WHERE content LIKE '%{q}%' OR name LIKE '%{q}%' LIMIT {limit}")
+    cur.execute("SELECT source||'_'||source_id AS id, title AS name, content, url, bookmarked_at AS timestamp, source AS type FROM bookmarks WHERE is_active=1 AND (content LIKE ? OR title LIKE ?) ORDER BY bookmarked_at DESC LIMIT ?", (f'%{q}%', f'%{q}%', limit))
     rows = cur.fetchall()
     conn.close()
     return [{'id': r[0], 'name': r[1], 'content': (r[2] or '')[:200], 'url': r[3]} for r in rows]
 
 def search_with_filters(q, limit=10, topic=None, entity=None, category=None, after=None, before=None):
     """
-    Enhanced search with full metadata filtering
+    Enhanced search on bookmarks table with bookmarks_tags for topic/entity filters.
+    Replaces dead nodes+relationships queries.
     """
     conn = sqlite3.connect(DB)
     cur = conn.cursor()
     
-    # Build query dynamically
-    conditions = []
+    conditions = ["is_active=1"]
     params = []
     
     # Text search
     if q:
-        conditions.append("(n.content LIKE ? OR n.name LIKE ?)")
+        conditions.append("(content LIKE ? OR title LIKE ?)")
         params.extend([f'%{q}%', f'%{q}%'])
     
-    # Topic filter
+    # Topic filter via bookmarks_tags
     if topic:
         conditions.append("""
-            n.id IN (
-                SELECT r.from_id FROM relationships r 
-                JOIN nodes tn ON tn.id = r.to_id 
-                WHERE r.type='about_topic' AND tn.name=?
-            )
-        """)
-        params.append(topic)
-    
-    # Entity filter  
-    if entity:
-        conditions.append("""
-            n.id IN (
-                SELECT r.from_id FROM relationships r 
-                JOIN nodes en ON en.id = r.to_id 
-                WHERE r.type='mentions_entity' AND en.name=?
-            )
-        """)
-        params.append(entity)
-    
-    # Category filter
-    if category:
-        conditions.append("""
             id IN (
-                SELECT r.from_id FROM relationships r 
-                JOIN nodes n ON n.id = r.to_id 
-                WHERE r.type='has_category' AND n.name=?
+                SELECT bt.bookmark_id FROM bookmarks_tags bt
+                WHERE bt.tag = ? AND bt.bookmark_id = bookmarks.id
             )
         """)
-        params.append(category)
+        params.append(topic.lower())
     
     # Date range
     if after:
-        conditions.append("timestamp >= ?")
+        conditions.append("bookmarked_at >= ?")
         params.append(after)
     if before:
-        conditions.append("timestamp <= ?")
+        conditions.append("bookmarked_at <= ?")
         params.append(before)
     
-    # Build SQL
     where_clause = " AND ".join(conditions) if conditions else "1=1"
     query = f"""
-        SELECT DISTINCT n.id, n.name, n.content, n.url, n.timestamp, n.type,
-               GROUP_CONCAT(DISTINCT t.name) as topics,
-               GROUP_CONCAT(DISTINCT e.name) as entities
-        FROM nodes n
-        LEFT JOIN relationships r_topic ON r_topic.from_id = n.id AND r_topic.type='about_topic'
-        LEFT JOIN nodes t ON t.id = r_topic.to_id AND t.type='topic'
-        LEFT JOIN relationships r_entity ON r_entity.from_id = n.id AND r_entity.type='mentions_entity'  
-        LEFT JOIN nodes e ON e.id = r_entity.to_id AND e.type='entity'
+        SELECT source||'_'||source_id AS id,
+               title AS name,
+               content,
+               url,
+               bookmarked_at AS timestamp,
+               source AS type,
+               content_source
+        FROM bookmarks
         WHERE {where_clause}
-        GROUP BY n.id
-        ORDER BY n.timestamp DESC
+        ORDER BY bookmarked_at DESC
         LIMIT ?
     """
     params.append(limit)
@@ -106,13 +81,14 @@ def search_with_filters(q, limit=10, topic=None, entity=None, category=None, aft
     for r in rows:
         results.append({
             'id': r[0],
-            'name': r[1],
+            'name': r[1] or '',
             'content': (r[2] or '')[:200],
-            'url': r[3],
-            'timestamp': r[4],
-            'type': r[5],
-            'topics': r[6].split(',') if r[6] else [],
-            'entities': r[7].split(',') if r[7] else []
+            'url': r[3] or '',
+            'timestamp': r[4] or '',
+            'type': r[5] or '',
+            'content_source': r[6] if r[6] else 'unknown',
+            'topics': [],
+            'entities': []
         })
     
     return results
@@ -209,10 +185,9 @@ def get_bookmarks_by_interest(user_topic, limit=10):
     cur = conn.cursor()
     cur.execute("""
         SELECT n.id, n.name, n.content, n.url, n.timestamp
-        FROM nodes n
-        JOIN relationships r ON r.from_id = n.id
-        JOIN nodes t ON t.id = r.to_id
-        WHERE r.type='about_topic' AND t.name = ?
+        FROM bookmarks
+        JOIN bookmarks_tags bt ON bt.bookmark_id = bookmarks.id
+        WHERE bt.tag = ?
         ORDER BY n.timestamp DESC
         LIMIT ?
     """, [user_topic, limit])
@@ -230,29 +205,29 @@ def health():
 def stats():
     conn = sqlite3.connect(DB)
     cur = conn.cursor()
-    cur.execute('SELECT COUNT(*) FROM nodes')
+    cur.execute('SELECT COUNT(*) FROM bookmarks WHERE is_active=1')
     total = cur.fetchone()[0]
-    
-    cur.execute("SELECT COUNT(*) FROM nodes WHERE type='twitter_tweet'")
+
+    cur.execute("SELECT COUNT(*) FROM bookmarks WHERE is_active=1 AND source='twitter'")
     tweets = cur.fetchone()[0]
-    
-    cur.execute("SELECT COUNT(*) FROM nodes WHERE type='instagram_post'")
+
+    cur.execute("SELECT COUNT(*) FROM bookmarks WHERE is_active=1 AND source='instagram'")
     instagram = cur.fetchone()[0]
-    
-    cur.execute("SELECT COUNT(*) FROM nodes WHERE type='entity'")
-    entities = cur.fetchone()[0]
-    
-    cur.execute("SELECT COUNT(*) FROM relationships")
-    relationships = cur.fetchone()[0]
-    
+
+    cur.execute("SELECT COUNT(*) FROM bookmarks WHERE is_active=1 AND content_source='scrape_fail'")
+    scrape_fails = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM bookmarks WHERE is_active=1 AND (content='' OR content IS NULL)")
+    empty_content = cur.fetchone()[0]
+
     conn.close()
     
     return jsonify({
         'total': total,
         'tweets': tweets,
         'instagram': instagram,
-        'entities': entities,
-        'relationships': relationships
+        'scrape_fails': scrape_fails,
+        'empty_content': empty_content
     })
 
 @app.route('/search')

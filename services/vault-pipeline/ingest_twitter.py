@@ -170,18 +170,21 @@ def ingest_bookmarks(bookmarks: list[dict], db_path: str | Path | None = None) -
 
         try:
             metadata_json = json.dumps(bm.get("metadata", {}), ensure_ascii=False)
+            raw_content = bm.get("content", "") or ""
+            content_source = "empty_caption" if not raw_content.strip() else "scrape_success"
             cursor = conn.execute(
                 """INSERT INTO bookmarks
-                   (source, source_id, url, title, content, bookmarked_at, scraped_at, updated_at, metadata)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   (source, source_id, url, title, content, content_source, bookmarked_at, scraped_at, updated_at, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(url) DO UPDATE SET
                        content = COALESCE(NULLIF(excluded.content, ''), bookmarks.content),
+                       content_source = COALESCE(NULLIF(excluded.content_source, 'unknown'), bookmarks.content_source),
                        metadata = excluded.metadata,
                        updated_at = excluded.updated_at,
                        title = COALESCE(NULLIF(excluded.title, ''), bookmarks.title)
                 """,
                 (bm["source"], bm["source_id"], bm["url"], bm.get("title", ""),
-                 bm.get("content", ""), bm.get("bookmarked_at"), bm.get("scraped_at", now),
+                 raw_content, content_source, bm.get("bookmarked_at"), bm.get("scraped_at", now),
                  now, metadata_json),
             )
 

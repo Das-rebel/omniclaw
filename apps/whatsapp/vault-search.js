@@ -519,8 +519,17 @@ function buildVaultResult(item, index) {
     // Rest of tweet after the first line
     const body = rawContent.slice(firstLine.length).replace(/https?:\/\/\S+/g, '').slice(0, 100).replace(/\n/g, ' ').trim();
 
+    // Grounded answer: show source + date + caption preview
+    const groundedLine = '📋 ' + handle + (date ? ' on ' + date : '');
+    const captionPreview = rawContent
+      ? rawContent.replace(/https?:\/\/\S+/g, '').slice(0, 120).replace(/\n+/g, ' ').trim()
+      : (item.content_source === 'scrape_fail' ? '⚠️ caption unavailable'
+        : item.content_source === 'empty_caption' ? '📝 no caption'
+        : '');
+
     const lines = ['*' + titleFinal + '*'];
     if (body) lines.push(body);
+    if (captionPreview) lines.push(groundedLine + ': ' + captionPreview);
     lines.push('\u{1F426} ' + handle);
     if (date) lines.push('\u{1F4C5} ' + date);
     if (url) lines.push('\u{1F517} ' + url);
@@ -536,11 +545,22 @@ function buildVaultResult(item, index) {
   const rt = meta.retweet_count || 0;
   const views = meta.view_count || '';
 
+  // Grounded: show source + date as attribution + caption preview
+  const igSource = item.source || item.type || 'instagram';
+  const groundedLine = '📋 from ' + (igSource.includes('instagram') ? 'IG' : igSource) + (date ? ' on ' + date : '');
+  const captionForIg = (item.content || item.caption || '');
+  const captionPreviewIg = captionForIg
+    ? captionForIg.replace(/https?:\/\/\S+/g, '').slice(0, 120).replace(/\n+/g, ' ').trim()
+    : (item.content_source === 'scrape_fail' ? '⚠️ caption unavailable'
+      : item.content_source === 'empty_caption' ? '📝 no caption'
+      : '');
+
   const lines = [];
   // Show name as title; skip content if it's the same as name (no redundancy)
   const contentIsSame = content && (name.startsWith(content) || content.startsWith(name) || name === content);
   if (name) lines.push('*' + name + '*');
-  if (content && !contentIsSame) lines.push(content);
+  if (captionPreviewIg) lines.push(groundedLine + ': ' + captionPreviewIg);
+  else if (content && !contentIsSame) lines.push(content);
 
   // Stats line
   let stats = '';
