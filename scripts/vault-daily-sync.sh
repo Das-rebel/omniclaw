@@ -1,8 +1,13 @@
 #!/bin/bash
 #
-# Vault Daily Sync Pipeline
-# Runs full scrape + ingest + sync nodes + push vault.db to GCS
-# Cron: 4 AM UTC daily
+# Vault Daily Sync Pipeline (Mac side, simplified)
+# Runs scrape + ingest locally; exports to local vault.db only.
+# GCS export was disabled 2026-10-18 because the omniclaw-knowledge-graph
+# bucket no longer exists. The droplet's cron (run_daily_sync.sh) handles
+# the real daily sync and writes to /opt/vault-search/vault.db there.
+#
+# Cron: 4 AM UTC daily (disabled by default — uncomment the cron entry
+# in crontab if you want the Mac to also run sync)
 #
 set -euo pipefail
 
@@ -13,46 +18,41 @@ LOG="/tmp/vault_sync.log"
 
 echo "===== Vault Daily Sync - $(date -u '+%Y-%m-%d %H:%M:%S UTC') =====" >> "$LOG" 2>&1
 
-# --- Step 0: Load cookies from GCS ---
-echo "[0/4] Loading cookies from GCS..." >> "$LOG" 2>&1
-export TWITTER_COOKIES=$(/opt/homebrew/bin/gsutil cat gs://omniclaw-knowledge-graph/vault/cookies/twitter_cookies.json 2>/dev/null || echo "")
-export INSTAGRAM_COOKIES=$(/opt/homebrew/bin/gsutil cat gs://omniclaw-knowledge-graph/vault/cookies/instagram_cookies.json 2>/dev/null || echo "")
+# --- Step 0: Local cookie check (no GCS) ---
+echo "[0/3] Cookie check (local files only)..." >> "$LOG" 2>&1
+TWITTER_COOKIES_FILE="$HOME/.twscrape_cookies.json"
+INSTAGRAM_COOKIES_FILE="$HOME/.instagram_cookies.json"
+if [ -f "$TWITTER_COOKIES_FILE" ]; then
+  export TWITTER_COOKIES=$(cat "$TWITTER_COOKIES_FILE")
+fi
+if [ -f "$INSTAGRAM_COOKIES_FILE" ]; then
+  export INSTAGRAM_COOKIES=$(cat "$INSTAGRAM_COOKIES_FILE")
+fi
 export TWITTER_USERNAME="Subhojit_Sarkar"
 export INSTAGRAM_USERNAME="subhojit.sarkar"
-echo "[0/4] Cookies loaded (TWITTER: $([ -n "$TWITTER_COOKIES" ] && echo yes || echo no), INSTAGRAM: $([ -n "$INSTAGRAM_COOKIES" ] && echo yes || echo no))" >> "$LOG" 2>&1
+echo "[0/3] Twitter cookies: $([ -f "$TWITTER_COOKIES_FILE" ] && echo yes || echo no), Instagram cookies: $([ -f "$INSTAGRAM_COOKIES_FILE" ] && echo yes || echo no)" >> "$LOG" 2>&1
 
-# --- Step 1: Run full sync pipeline (scrape twitter + instagram, ingest, export to GCS) ---
-echo "[1/4] Running sync_pipeline.py (scrape + ingest + export)..." >> "$LOG" 2>&1
+# --- Step 1: Run sync_pipeline (scrape + ingest, no GCS export) ---
+echo "[1/3] Running sync_pipeline.py..." >> "$LOG" 2>&1
 cd "$PIPELINE_DIR"
-"$PYTHON" sync_pipeline.py --db "$DEPLOY_DIR/learning_base/vault.db" >> "$LOG" 2>&1
+"$PYTHON" sync_pipeline.py --db "$DEPLOY_DIR/learning_base/vault.db" --no-export >> "$LOG" 2>&1
 SYNC_EXIT=$?
 if [ $SYNC_EXIT -ne 0 ]; then
-    echo "[ERROR] sync_pipeline.py exited with code $SYNC_EXIT" >> "$LOG" 2>&1
-    exit $SYNC_EXIT
+    echo "[ERROR] sync_pipeline.py exited with $SYNC_EXIT" >> "$LOG" 2>&1
+    # Don't exit — let the rest run
 fi
-echo "[1/4] sync_pipeline.py completed" >> "$LOG" 2>&1
+echo "[1/3] sync_pipeline.py completed" >> "$LOG" 2>&1
 
-# --- Step 2: Sync bookmarks (bookmarks table) → nodes table ---
-echo "[2/4] Syncing bookmarks → nodes..." >> "$LOG" 2>&1
-cd "$DEPLOY_DIR"
-"$PYTHON" sync_bookmarks_to_nodes.py >> "$LOG" 2>&1
-echo "[2/4] nodes sync complete" >> "$LOG" 2>&1
+# --- Step 2: Skip nodes table (deprecated since 2026-10-18) ---
+# The nodes table was the legacy schema that search_api_v2.py used to query.
+# As of the VaultBrain fixes (commits 0024373, 59b3955), queries go directly
+# to the bookmarks table. We no longer sync to nodes.
+echo "[2/3] Skipping nodes table sync (deprecated 2026-10-18)" >> "$LOG" 2>&1
 
-# --- Step 3: Upload updated vault.db to GCS so Cloud Run picks it up ---
-echo "[3/4] Uploading vault.db to GCS..." >> "$LOG" 2>&1
-VaultDB="$DEPLOY_DIR/learning_base/vault.db"
-if [ -f "$VaultDB" ]; then
-    gsutil cp "$VaultDB" "gs://omniclaw-knowledge-graph/learning_base/vault.db" >> "$LOG" 2>&1
-    echo "[3/4] vault.db uploaded ($(stat -f%z "$VaultDB" 2>/dev/null || stat -c%s "$VaultDB" 2>/dev/null || echo '?') bytes)" >> "$LOG" 2>&1
-else
-    echo "[WARN] vault.db not found at $VaultDB" >> "$LOG" 2>&1
-fi
-
-# --- Step 4: Verify GCS files ---
-echo "[4/4] Verifying GCS fingerprints..." >> "$LOG" 2>&1
-/opt/homebrew/bin/gsutil ls -la gs://omniclaw-knowledge-graph/vault/unified_bookmarks.json >> "$LOG" 2>&1
-/opt/homebrew/bin/gsutil ls -la gs://omniclaw-knowledge-graph/learning_base/vault.db >> "$LOG" 2>&1
-echo "[4/4] Done" >> "$LOG" 2>&1
+# --- Step 3: GCS export disabled ---
+# The omniclaw-knowledge-graph bucket was deleted. The droplet's
+# /opt/vault-search/vault.db is the authoritative source now.
+echo "[3/3] GCS export disabled (bucket omniclaw-knowledge-graph not found 2026-10-18)" >> "$LOG" 2>&1
 
 echo "===== Vault Daily Sync Complete - $(date -u '+%Y-%m-%d %H:%M:%S UTC') =====" >> "$LOG" 2>&1
 echo "" >> "$LOG" 2>&1
