@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """
-Vault Sync v2 — Instagram Scraper (Standalone Subprocess)
+⚠️  DEPRECATED 2026-10-18 — use scrape_instagram_v2.py instead.
+
+This v1 script uses the instagrapi library which has unreliable caption
+extraction (Oct 2025 IG caption bug). It is kept for reference only.
+
+v2 has the in-flight caption capture from graphql pagination responses
+that fixes the caption-missing bug. Migrate to:
+
+  python3 scrape_instagram_v2.py             # daily incremental
+  python3 scrape_instagram_v2.py --backfill  # deep backfill
+
+Original docstring (v1):
+"""
+ORIGINAL_DOC = """Vault Sync v2 — Instagram Scraper (Standalone Subprocess)
 
 Sources (in priority order):
 1. Direct HTTP: Instagram saved posts API via curl subprocess (hard OS timeout)

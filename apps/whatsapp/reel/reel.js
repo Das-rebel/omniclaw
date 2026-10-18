@@ -328,6 +328,17 @@ async function _generateReelInner() {
   try {
     const MEDIA_CACHE = '/opt/whatsapp/media_cache';
     if (!fs.existsSync(MEDIA_CACHE)) fs.mkdirSync(MEDIA_CACHE, { recursive: true });
+    // v7.4: GC — prune cache files older than 14 days (signed IG URLs expire faster)
+    try {
+      const now = Date.now();
+      const maxAgeMs = 14 * 24 * 60 * 60 * 1000;
+      for (const f of fs.readdirSync(MEDIA_CACHE)) {
+        const fp = MEDIA_CACHE + '/' + f;
+        try {
+          if (now - fs.statSync(fp).mtimeMs > maxAgeMs) fs.unlinkSync(fp);
+        } catch (e) {}
+      }
+    } catch (eGC) {}
     for (const it of items) {
       if (!it.media_url || it.local_media) continue;
       if (!/scontent|cdninstagram|fbcdn/.test(it.media_url)) continue;
