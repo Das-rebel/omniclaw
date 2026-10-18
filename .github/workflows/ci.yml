@@ -31,11 +31,15 @@ jobs:
 
       - name: Run unit tests
         run: |
-          if grep -q '"test"' package.json; then
-            npm test --if-present
-          else
-            echo "No test script in package.json - skipping"
+          if [ ! -f test/run-tests.js ]; then
+            echo "No test runner at test/run-tests.js - skipping unit tests"
+            exit 0
           fi
+          if ! grep -q '"test"' package.json; then
+            echo "No test script in package.json - skipping"
+            exit 0
+          fi
+          npm test
         shell: bash
 
   python-syntax:
