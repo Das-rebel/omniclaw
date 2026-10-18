@@ -123,6 +123,53 @@ def set_meta(conn, key, value):
     conn.commit()
 
 
+
+
+# ─── Caption Quality Guard ─────────────────────────────────
+# Detects when a "scraped" caption is actually a login wall or cookie-expiry page.
+# Prevents the IG caption bug from Oct 2025 where cookies were dead and the
+# "By using Meta AI..." text was being saved as the caption for 138 posts.
+
+COOKIE_WALL_PATTERNS = [
+    "By using Meta AI, you agree to the AI terms",
+    "Log in to Instagram",
+    "Sign in to continue",
+    "You must be logged in",
+    "Login required",
+    "Verify your account",
+    "Confirm you are human",
+    "Access denied",
+    "This page isn't available",
+    "Sorry, this page isn't available",
+]
+
+def is_cookie_wall(content: str | None) -> bool:
+    """Return True if content looks like a cookie wall or login redirect."""
+    if not content:
+        return False
+    c = content.strip()
+    if not c:
+        return False
+    for pat in COOKIE_WALL_PATTERNS:
+        if pat.lower() in c.lower():
+            return True
+    return False
+
+
+def classify_content_source(content: str | None) -> str:
+    """
+    Determine the right content_source value for a given content.
+    Returns: 'scrape_fail' | 'empty_caption' | 'no_caption' | 'scrape_success'
+    """
+    if content is None:
+        return "no_caption"
+    if not content.strip():
+        return "empty_caption"
+    if is_cookie_wall(content):
+        return "scrape_fail"
+    return "scrape_success"
+
+
 if __name__ == "__main__":
     conn = init_schema()
     ver = get_meta(conn, "schema_version")

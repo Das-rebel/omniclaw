@@ -366,7 +366,8 @@ def ingest_bookmarks(bookmarks: list[dict], db_path: str | Path | None = None) -
         try:
             metadata_json = json.dumps(bm.get("metadata", {}), ensure_ascii=False)
             raw_content = bm.get("content", "") or ""
-            content_source = "empty_caption" if not raw_content.strip() else "scrape_success"
+            from unified_schema import classify_content_source
+            content_source = classify_content_source(raw_content)
             cursor = conn.execute(
                 """INSERT INTO bookmarks
                    (source, source_id, url, title, content, content_source, bookmarked_at, scraped_at, updated_at, metadata)
