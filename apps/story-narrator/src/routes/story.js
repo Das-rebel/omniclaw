@@ -6,6 +6,17 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 
+// Hindi voices (hf_/hm_) must always be phonemized as Hindi: espeak with an
+// en-us voice cannot read Devanagari and speaks the language tags aloud
+// ('hi ... en-us' becomes audible). The voice wins over the request.
+const resolveLang = (language, voice) => {
+  if (typeof voice === 'string' && /^(hf_|hm_)/.test(voice)) return 'hi';
+  return language || 'en';
+};
+
+
+
+
 // Story generation templates
 const STORY_TEMPLATES = {
   fantasy: {
@@ -39,11 +50,23 @@ const STORY_TEMPLATES = {
 const CHARACTER_VOICES = {
   NARRATOR: 'bm_daniel',
   HERO: 'am_michael',
-  VILLAIN: 'am_anthony',
-  SIDEKICK: 'am_fenris',
+  VILLAIN: 'am_onyx',        // was am_anthony (not in the 54-voice catalog)
+  SIDEKICK: 'am_fenrir',      // was am_fenris
   WISE_OLD_MAN: 'bm_george',
-  FEMALE_LEAD: 'hf_priya',
-  ROMANTIC: 'hm_arpit'
+  FEMALE_LEAD: 'hf_alpha',    // was hf_priya
+  ROMANTIC: 'hm_omega'        // was hm_arpit
+};
+
+// Hindi story voices — Devanagari must be read with an hf_/hm_ pack, else
+// espeak uses an en-us voice and speaks the language tags aloud.
+const CHARACTER_VOICES_HI = {
+  NARRATOR: 'hm_omega',
+  HERO: 'hm_psi',
+  VILLAIN: 'hm_psi',
+  SIDEKICK: 'hm_omega',
+  WISE_OLD_MAN: 'hm_omega',
+  FEMALE_LEAD: 'hf_alpha',
+  ROMANTIC: 'hm_omega'
 };
 
 /**
@@ -135,7 +158,7 @@ router.post('/narrate', async (req, res) => {
     content,
     storyUrl,
     voice = 'NARRATOR',
-    language = 'en',
+    language: _requestedLang = 'en',
     speed = 1.0
   } = req.body;
   
@@ -156,7 +179,13 @@ router.post('/narrate', async (req, res) => {
     const segments = parseStorySegments(storyText);
     
     // Get voice for character
-    const kokoroVoice = CHARACTER_VOICES[voice] || CHARACTER_VOICES.NARRATOR;
+    // Hindi stories must use a Hindi voice pack (hf_/hm_), otherwise espeak
+    // reads the Devanagari with an en-us voice and speaks the language tags
+    // aloud ('hi ... en-us' becomes audible in the output).
+    const isHindi = /[\u0900-\u097F]/.test(storyText || '');
+    const voiceMap = isHindi ? CHARACTER_VOICES_HI : CHARACTER_VOICES;
+    const kokoroVoice = voiceMap[voice] || voiceMap.NARRATOR;
+    const language = isHindi ? 'hi' : resolveLang(_requestedLang, kokoroVoice);
     
     res.json({
       success: true,

@@ -8,30 +8,34 @@ const router = express.Router();
 const { spawn } = require('child_process');
 const path = require('path');
 
+// Hindi voices (hf_/hm_) must always be phonemized as Hindi: espeak with an
+// en-us voice cannot read Devanagari and speaks the language tags aloud
+// ('hi ... en-us' becomes audible). The voice wins over the request.
+const resolveLang = (language, voice) => {
+  if (typeof voice === 'string' && /^(hf_|hm_)/.test(voice)) return 'hi';
+  return language || 'en';
+};
+
+
 const KOKORO_PORT = process.env.KOKORO_PORT || 8081;
 const KOKORO_HOST = process.env.KOKORO_HOST || 'localhost';
 
-// Voice catalog - validated against Kokoro voices
+// Voice catalog — verified against voices-v1.0.bin (54 real voices)
 const KOKORO_VOICES = [
   // American English
-  'af_heart', 'af_nicole', 'af_sarah', 'af_sky', 'af_bella', 'af_scallop',
-  'am_adam', 'am_anthony', 'am_fenris', 'am_michael',
+  'af_alloy', 'af_aoede', 'af_bella', 'af_heart', 'af_jessica', 'af_kore', 'af_nicole', 'af_nova', 'af_river', 'af_sarah', 'af_sky',
+  'am_adam', 'am_echo', 'am_eric', 'am_fenrir', 'am_liam', 'am_michael', 'am_onyx', 'am_puck', 'am_santa',
   // British English
-  'bf_alice', 'bf_emma', 'bf_lily', 'bm_daniel', 'bm_george', 'bm_lewis',
-  // Spanish
-  'ef_iyera', 'em_alvaro', 'em_pedro',
-  // French
-  'ff_siwis',
-  // Hindi
-  'hf_niya', 'hf_priya', 'hm_arpit', 'hm_rahul',
-  // Italian
-  'if_chiara', 'im_alessandro',
-  // Japanese
-  'jf_abigail', 'jf_miyu', 'jm_ken', 'jm_masaru', 'jm_osamu',
-  // Portuguese
-  'pf_dora', 'pm_alberto', 'pm_carlos',
-  // Mandarin
-  'zf_yunxi', 'zf_yunxia', 'zm_yunyang'
+  'bf_alice', 'bf_emma', 'bf_isabella', 'bf_lily', 'bm_daniel', 'bm_fable', 'bm_george', 'bm_lewis',
+  // Spanish / French
+  'ef_dora', 'em_alex', 'em_santa', 'ff_siwis',
+  // Hindi (real v1.0 pack voices)
+  'hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi',
+  // Italian / Japanese
+  'if_sara', 'im_nicola', 'jf_alpha', 'jf_gongitsune', 'jf_nezumi', 'jf_tebukuro', 'jm_kumo',
+  // Portuguese / Mandarin
+  'pf_dora', 'pm_alex', 'pm_santa', 'zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi',
+  'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang'
 ];
 
 // Language mapping for Kokoro
@@ -64,8 +68,12 @@ function startKokoroServer() {
   console.log('Kokoro TTS server starting...');
 }
 
-// Initialize Kokoro server
-startKokoroServer();
+// Initialize Kokoro server (skipped when KOKORO_EXTERNAL=1 — e.g. systemd-managed python service)
+if (process.env.KOKORO_EXTERNAL === '1') {
+  console.log(`[Kokoro] external mode: expecting TTS server at ${KOKORO_HOST}:${KOKORO_PORT}`);
+} else {
+  startKokoroServer();
+}
 
 // List available voices
 router.get('/voices', (req, res) => {
@@ -114,7 +122,8 @@ router.get('/health', async (req, res) => {
 
 // Synthesize with Kokoro
 router.post('/synthesize', async (req, res) => {
-  const { text, voice = 'af_heart', speed = 1.0, language = 'en' } = req.body;
+  const { text, voice = 'af_heart', speed = 1.0, language: _requestedLang = 'en' } = req.body;
+  const language = resolveLang(_requestedLang, voice);
   
   if (!text) {
     return res.status(400).json({ error: 'Text is required' });
@@ -137,7 +146,7 @@ router.post('/synthesize', async (req, res) => {
       path: '/synthesize',
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
-      timeout: 30000
+      timeout: 120000
     };
     
     const promise = new Promise((resolve, reject) => {
@@ -170,7 +179,8 @@ router.post('/synthesize', async (req, res) => {
 
 // Stream synthesis
 router.post('/synthesize-stream', async (req, res) => {
-  const { text, voice = 'af_heart', speed = 1.0, language = 'en' } = req.body;
+  const { text, voice = 'af_heart', speed = 1.0, language: _requestedLang = 'en' } = req.body;
+  const language = resolveLang(_requestedLang, voice);
   
   if (!text) {
     return res.status(400).json({ error: 'Text is required' });
@@ -178,6 +188,8 @@ router.post('/synthesize-stream', async (req, res) => {
   
   try {
     const http = require('http');
+
+
     const postData = JSON.stringify({ text, voice, speed, language });
     
     const options = {
@@ -186,7 +198,7 @@ router.post('/synthesize-stream', async (req, res) => {
       path: '/synthesize-stream',
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
-      timeout: 30000
+      timeout: 120000
     };
     
     const promise = new Promise((resolve, reject) => {

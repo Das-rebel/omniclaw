@@ -10,6 +10,7 @@ const rateLimit = require('express-rate-limit');
 
 const voiceRoutes = require('./routes/voice');
 const storyRoutes = require('./routes/story');
+const kokoroRoutes = require('./routes/kokoro');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -43,6 +44,7 @@ app.get('/health', (req, res) => {
 // Routes — no /api prefix, no Kokoro
 app.use('/voices', voiceRoutes);
 app.use('/', storyRoutes);
+app.use('/kokoro', kokoroRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
