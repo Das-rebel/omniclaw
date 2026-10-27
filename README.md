@@ -8,7 +8,7 @@
 
 **12 Built-in Skills (Matt Pocock framework)** — OmniClaw now exposes 12 engineering skills as slash commands: `/diagnose`, `/grill-me`, `/tdd`, `/to-issues`, `/to-prd`, `/triage`, `/improve-codebase-architecture`, `/write-a-skill`, `/zoom-out`, `/caveman`, `/fusion`, `/brainstorming-research-ideas`. **Why it matters:** For growth teams managing complex multi-step workflows, these skills turn OmniClaw into a research partner — not just a bot. Subhajit uses `/diagnose` to debug WhatsApp message routing issues and `/brainstorming-research-ideas` to ideate on new data sources for the Growth Workflow OS pipeline.
 
-**GCP Production Deployment (8+ LLM providers)** — OmniClaw routes across OpenAI, Anthropic, Gemini, Groq, Cerebras, Ollama, LM Studio, and vLLM simultaneously. Production URL: `dasomni-bot-338789220059.asia-south1.run.app`. **Why it matters:** For teams running multi-channel campaigns (WhatsApp + Telegram + Alexa), this single orchestration layer means Subhajit changes the LLM provider in one config file and it propagates across all channels — no per-channel updates. Cost dropped 40% when switching from OpenAI-only to Groq-for-simple-queries routing.
+**Droplet Production Deployment (8+ LLM providers)** — OmniClaw routes across OpenAI, Anthropic, Gemini, Groq, Cerebras, Ollama, LM Studio, and vLLM simultaneously. Production URL: `159.65.10.49:8443 (DO droplet)`. **Why it matters:** For teams running multi-channel campaigns (WhatsApp + Telegram + Alexa), this single orchestration layer means Subhajit changes the LLM provider in one config file and it propagates across all channels — no per-channel updates. Cost dropped 40% when switching from OpenAI-only to Groq-for-simple-queries routing.
 ### 🧠 Memory V3 — Temporal Knowledge Graph (NEW)
 
 **Sep 2026** — Persistent session memory with 3-layer architecture:
@@ -1133,7 +1133,7 @@ MIT License - See [LICENSE](LICENSE)
 - **Issues**: [GitHub Issues](https://github.com/Das-rebel/omniclaw/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/Das-rebel/omniclaw/discussions)
 - **Telegram Bot**: [t.me/Dasomni_bot](https://t.me/Dasomni_bot)
-- **Production URL**: [dasomni-bot-338789220059.asia-south1.run.app](https://dasomni-bot-338789220059.asia-south1.run.app)
+- **Production URL**: https://159.65.10.49:8443 (DO droplet, self-hosted)
 
 ---
 
