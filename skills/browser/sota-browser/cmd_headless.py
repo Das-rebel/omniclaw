@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-cmd-headless v1.7.0 — One-command browser automation CLI
+cmd-headless v1.8.0 — One-command browser automation CLI + autonomous agent
 
-Stealth Browsers (v1.7):
+Stealth Browsers (v1.8):
 - --cloakbrowser: CloakBrowser (71 C++ stealth patches, highest stealth)
 - --botright: Botright (enhanced stealth + free CAPTCHA solving)
 - --proxy: HTTP/SOCKS5 proxy with rotation support
@@ -199,6 +199,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cost", action="store_true", help="Show cost breakdown")
     p.add_argument("--version", action="store_true", help="Show version")
     # Local CAPTCHA solver (open source, no paid API)
+    g_agent = p.add_argument_group("Agent mode (v1.8)")
+    g_agent.add_argument("--agent", action="store_true",
+                         help="Autonomous agent loop: prompt = task (e.g. --agent \"go to X and find Y\")")
+    g_agent.add_argument("--max-steps", type=int, default=15,
+                         help="Max agent steps (default 15)")
+    g_agent.add_argument("--llm", choices=["ollama", "openai"],
+                         help="Agent brain (default: auto — ollama if reachable, else OpenAI)")
+    g_agent.add_argument("--llm-model",
+                         help="Model name (default: qwen2.5:3b ollama / gpt-4o-mini openai)")
+    g_agent.add_argument("--llm-base-url", help="Override LLM endpoint URL")
+    g_net = p.add_argument_group("Network capture (v1.8)")
+    g_net.add_argument("--net", nargs="?", const="", default=None, metavar="PATTERN",
+                       help="Capture network responses (optional URL substring filter; bare --net = all)")
+    g_net.add_argument("--net-body", action="store_true",
+                       help="Include JSON/text bodies for xhr/fetch responses (64KB cap each)")
+    g_net.add_argument("--har", metavar="FILE", help="Write captured requests as HAR 1.2 JSON")
     p.add_argument("--solve-captcha", action="store_true",
                    help="Solve CAPTCHA (Turnstile/reCAPTCHA) on the page before proceeding")
     p.add_argument("--captcha-type", choices=["turnstile", "recaptcha-v2", "auto"], default="auto",
@@ -286,11 +302,43 @@ async def _apply_stealth(context) -> bool:
     return True
 
 
+async def _attach_net_async(page, pattern, capture_body):
+    """Attach network response capture to an async-API page (vanilla Playwright)."""
+    entries = []
+
+    async def on_response(resp):
+        try:
+            if len(entries) >= 2000:
+                return
+            url = resp.url
+            if pattern and pattern not in url:
+                return
+            req = resp.request
+            entry = {"url": url[:512], "status": resp.status,
+                     "method": req.method, "type": req.resource_type,
+                     "ts": round(time.time(), 3)}
+            if capture_body and req.resource_type in ("xhr", "fetch"):
+                try:
+                    ct = (resp.headers or {}).get("content-type", "")
+                    if any(k in ct for k in ("json", "text", "xml")):
+                        entry["body"] = (await resp.text())[:65536]
+                        entry["content_type"] = ct
+                except Exception:
+                    pass
+            entries.append(entry)
+        except Exception:
+            pass
+
+    page.on("response", on_response)
+    return entries
+
+
 async def _browse_local(prompt: str, cookies: List = None, stealth: bool = True,
                         profile_dir: str = None, screenshot: str = None,
                         timeout: int = 30, nopecha_extension: str = None,
                         use_cloakbrowser: bool = False, use_botright: bool = False,
-                        proxy: str = None) -> Dict:
+                        proxy: str = None, net_pattern: str = None,
+                        net_body: bool = False, net_har: str = None) -> Dict:
     from playwright.async_api import async_playwright
     url_match = re.search(r"go to (\S+)", prompt)
     if not url_match:
@@ -312,6 +360,10 @@ async def _browse_local(prompt: str, cookies: List = None, stealth: bool = True,
                     cloak_kwargs["proxy"] = proxy
                 browser = cloak_launch(**cloak_kwargs)
                 page = browser.new_page()
+                net_entries = None
+                if net_pattern is not None:
+                    from agent_loop import attach_net_capture
+                    net_entries = attach_net_capture(page, net_pattern, net_body)
                 result = {}
                 try:
                     response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
@@ -328,6 +380,12 @@ async def _browse_local(prompt: str, cookies: List = None, stealth: bool = True,
                 if screenshot:
                     page.screenshot(path=screenshot, full_page=True)
                     result["screenshot"] = screenshot
+                if net_entries is not None:
+                    result["network_count"] = len(net_entries)
+                    result["network"] = net_entries[:500]
+                    if net_har:
+                        from agent_loop import write_har
+                        result["har"] = write_har(net_entries, net_har)
                 browser.close()
                 return result
 
@@ -349,6 +407,10 @@ async def _browse_local(prompt: str, cookies: List = None, stealth: bool = True,
                 botright = Botright(headless=True)
                 browser = botright.launch()
                 page = browser.new_page()
+                net_entries = None
+                if net_pattern is not None:
+                    from agent_loop import attach_net_capture
+                    net_entries = attach_net_capture(page, net_pattern, net_body)
                 result = {}
                 try:
                     response = page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
@@ -365,6 +427,12 @@ async def _browse_local(prompt: str, cookies: List = None, stealth: bool = True,
                 if screenshot:
                     page.screenshot(path=screenshot, full_page=True)
                     result["screenshot"] = screenshot
+                if net_entries is not None:
+                    result["network_count"] = len(net_entries)
+                    result["network"] = net_entries[:500]
+                    if net_har:
+                        from agent_loop import write_har
+                        result["har"] = write_har(net_entries, net_har)
                 botright.close()
                 return result
 
@@ -411,6 +479,9 @@ async def _browse_local(prompt: str, cookies: List = None, stealth: bool = True,
                      for c in cookies]
             await context.add_cookies(clean)
         page = await context.new_page()
+        net_entries = None
+        if net_pattern is not None:
+            net_entries = await _attach_net_async(page, net_pattern, net_body)
         try:
             response = await page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
             status = response.status if response else 0
@@ -431,6 +502,12 @@ async def _browse_local(prompt: str, cookies: List = None, stealth: bool = True,
             state_path = os.path.join(profile_dir, "state.json")
             await context.storage_state(path=state_path)
             result["profile_saved"] = state_path
+        if net_entries is not None:
+            result["network_count"] = len(net_entries)
+            result["network"] = net_entries[:500]
+            if net_har:
+                from agent_loop import write_har
+                result["har"] = write_har(net_entries, net_har)
         await browser.close()
         return result
 
@@ -467,8 +544,10 @@ def _browse_cloud(prompt: str, api_key: str, timeout: int = 30) -> Dict:
 def main() -> int:
     args = parse_args()
     if args.version:
-        print("cmd-headless v1.7.0 (sota-browser)")
+        print("cmd-headless v1.8.0 (sota-browser)")
         print("Modes: --local (Playwright) | --cloud (Browser Use API) | --cdp (existing Chrome)")
+        print("Agent: --agent \"task\" [--max-steps N] [--llm ollama|openai] [--llm-model M]")
+        print("Network: --net [PATTERN] [--net-body] [--har FILE]  (works in all modes)")
         print("Cookies: --cookies chrome|brave|firefox [--domain DOMAIN]")
         print("Stealth: CloakBrowser (71 C++ patches) | Botright | playwright-stealth")
         print("Proxy: --proxy URL | --proxy-list FILE (rotating)")
@@ -499,6 +578,22 @@ def main() -> int:
         print(f"[cmd-headless] Loaded {len(cookies)} cookies from {args.cookies}", file=sys.stderr)
     else:
         cookies = None
+    # ── Agent mode (v1.8): autonomous plan→act→verify loop ──
+    if args.agent and prompt:
+        from agent_loop import run_agent
+        engine = ("botright" if args.botright
+                  else "playwright" if args.local
+                  else "cloakbrowser")
+        print(f"[cmd-headless] AGENT MODE engine={engine} max_steps={args.max_steps}", file=sys.stderr)
+        result = run_agent(
+            task=prompt, engine=engine, proxy=args.proxy,
+            cookies=cookies, profile_dir=args.profile_dir,
+            max_steps=args.max_steps, llm=args.llm,
+            llm_model=args.llm_model, llm_base_url=args.llm_base_url,
+            net_pattern=args.net, net_body=args.net_body, har_path=args.har,
+            screenshot=args.screenshot, stealth=not args.no_stealth)
+        print(json.dumps(result, indent=2))
+        return 0
     if args.cloud or (not args.local and not args.cdp and (args.sdk or "cloud" in prompt.lower())):
         api_key = os.environ.get("BROWSER_USE_API_KEY") or os.environ.get("BU_API_KEY")
         if not api_key:
@@ -527,6 +622,7 @@ def main() -> int:
             use_cloakbrowser=args.cloakbrowser,
             use_botright=args.botright,
             proxy=args.proxy,
+            net_pattern=args.net, net_body=args.net_body, net_har=args.har,
         ))
 
         # Optionally solve CAPTCHA after browsing

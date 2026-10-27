@@ -6,8 +6,13 @@ set -e
 
 # Configuration
 VAULT_API_URL="http://159.65.10.49:8080"
+VAULT_API_KEY=$(cat "$HOME/.vault_api_key" 2>/dev/null || echo "")
 SYNC_TYPE="manual"
 TIMESTAMP=$(date +%Y-%m-%dT%H:%M:%SZ)
+# NOTE: vault-search-v2 API requires X-API-Key on all endpoints except /health.
+# Sync itself runs SERVER-SIDE (vault-sync service / run_daily_sync.sh on the
+# droplet, which bypasses auth via localhost). This script only checks status.
+CURL_AUTH=(-H "X-API-Key: $VAULT_API_KEY")
 
 # Colors for output
 RED='\033[0;31m'
@@ -36,7 +41,7 @@ log_warning() {
 check_vault_api() {
     log "Checking vault API accessibility..."
     
-    if curl -s -f "$VAULT_API_URL/stats" > /dev/null; then
+    if curl -s -f "${CURL_AUTH[@]}" "$VAULT_API_URL/stats" > /dev/null; then
         log_success "Vault API is accessible"
         return 0
     else
@@ -49,7 +54,7 @@ check_vault_api() {
 get_sync_status() {
     log "Getting current sync status..."
     
-    if curl -s "$VAULT_API_URL/stats" | jq . 2>/dev/null; then
+    if curl -s "${CURL_AUTH[@]}" "$VAULT_API_URL/stats" | jq . 2>/dev/null; then
         log_success "Successfully retrieved sync status"
     else
         log_warning "Could not retrieve detailed sync status"
@@ -74,6 +79,7 @@ trigger_sync() {
         
         if curl -s -X POST \
             -H "Content-Type: application/json" \
+            -H "X-API-Key: $VAULT_API_KEY" \
             -d "$SYNC_PAYLOAD" \
             "$VAULT_API_URL$endpoint" | jq . 2>/dev/null; then
             log_success "Sync triggered successfully via $endpoint"

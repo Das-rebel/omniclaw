@@ -1,5 +1,37 @@
 # SOTA Browser MCP Server - Changelog
 
+## v1.8.0 (2026-03-30) — Autonomous Agent Mode + Network Capture
+
+### Robustness hardening (post smoke-tests)
+- **Loop-guard**: same action+args repeated 3x → abort loop, no wasted steps
+- **Deterministic fallback**: on loop-guard or max-steps exhaustion, if page text was extracted, answers the task with a single focused Q&A call (`answer_from_text`) — turns weak-model loops into correct answers
+- **Repeat warning** in observations; extracted PAGE TEXT persists across steps (invalidated on navigate), so extract-once → answer works
+- **Model resolution fix**: `--llm-model qwen2.5-fast` now matches installed `qwen2.5-fast:latest` (suffix-normalized); auto-preference: best-perf → qwen2.5:3b → qwen2.5-fast
+
+### `cmd-headless --agent` (NEW — P0)
+- Autonomous plan→act→verify browser agent: `cmd-headless --agent "go to X and find Y"`
+- **Engine-pluggable with CloakBrowser as DEFAULT** (71 C++ stealth patches); also `--botright`, `--local` (vanilla Playwright). One sync-Playwright code path drives all engines.
+- LLM brains (auto-detected): **Ollama local** (default qwen2.5:3b, free, private) or any OpenAI-compatible endpoint (`--llm openai --llm-model M --llm-base-url URL`, respects OPENAI_API_KEY / OPENAI_BASE_URL)
+- Strict-JSON action protocol (no function-calling dependency) — works with small local models
+- Indexed `[n]` element observation (token-compact, role/name/value/href/options per line) — Dev-Browser-style context efficiency
+- Actions: navigate, click, type(+submit), select, key, scroll, extract_text, screenshot, wait, done
+- CSS-path locators with coordinate fallback; React `fill()`-safe typing; auto error-abort after 4 consecutive failures; 2-strike LLM-malformed-JSON retry
+- Flags: `--agent --max-steps N --llm ollama|openai --llm-model M --llm-base-url URL`
+- New module: `agent_loop.py` (standalone-runnable: `python3 agent_loop.py "task"`)
+- Cookie import + `--profile-dir` session persistence work in agent mode
+
+### Network capture (NEW — P1)
+- `--net [PATTERN]` — capture all network responses (optional URL substring filter), works in **every** mode (cloakbrowser/botright/local/agent)
+- `--net-body` — include JSON/text response bodies for xhr/fetch (64KB cap each) — scrape ATS/job-board JSON APIs behind UIs instead of DOMs
+- `--har FILE` — export captured traffic as HAR 1.2
+- Sync variant (CloakBrowser/Botright threads) + async variant (vanilla Playwright)
+
+### Inspired by vault research (10x recheck)
+- TinyFish Mino / rtrvr / OpenAI Operator pattern → `--agent`
+- DeepCrawler API-endpoint discovery → `--net`/`--net-body`
+- Director.AI record→code-gen → future `--emit-code`
+- sawyerhood Dev Browser token-efficiency → `[n]` element lines
+
 ## v2.1.0 (2026-05-30) - cmd-headless CLI + Chrome Cookie Import
 
 ### cmd-headless CLI (NEW)
