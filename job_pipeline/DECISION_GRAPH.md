@@ -213,3 +213,64 @@ LinkedIn saved jobs = personal pre-qualified shortlist. Audit flow: gate-score e
 
 ## R45 — Taleo guest-alias + Greenhouse remix-form apply recipes (2026-10-27)
 UHG/Optum Taleo registered-email wall bypassed via Gmail alias (`sdas22+uhg@gmail.com`) → guest apply; re-opening a submitted app shows duplicate-error (that IS the confirmation). WPP Greenhouse remix-form: hidden react-select shim fills ONLY on real dropdown-option click (typed search text does not fill); reCAPTCHA Enterprise invisible/auto-scored server-side; form container id is `application-form` with dash. iimjobs note: title 'Executive' = JUNIOR there. WPP sponsorship field: pick Citizen for India-national roles.
+
+---
+
+## R46 — CANONICAL ROLE PRIORITY P0..P7 (search + apply order)
+
+```
+P0  Fintech (payments / lending / wealth / insurtech)  -> apply immediately, even with fewer yrs
+P1  Banks
+P2  NBFC
+P3  Internal fintech (fintech arms of large companies)
+P4  D2C growth & strategy
+P5  D2C growth roles
+P6  D2C marketing roles
+P7  Everything else                                 -> LEFTOVER TIME ONLY (allow_p7=1)
+```
+
+Implementation: `xiryn_kit/role_priority.py` (classify() -> P0..P7, should_apply()).
+Classification is **company-first**: the recognised company rosters (fintech / bank / NBFC /
+internal-fintech / D2C) decide the bucket; description keywords only decide the bucket for
+companies we do not recognise, and only on explicit self-identification ("we are a fintech",
+"an NBFC", "a payments bank"). A D2C brand stays D2C even when its JD mentions payments or
+credit — the vertical decides the bucket, not the vocabulary in the JD.
+
+Search order across every platform follows P0 -> P7. P7 roles are applied only after the
+P0-P6 pools are exhausted (`ALLOW_P7=1`).
+
+---
+
+## R47 — FO/CoS/EIR gate fixes: generic-exec title scope from JD (2026-10-28)
+The gate previously read function keywords from the TITLE only for generic exec titles, so
+"Founder's Office" / "EIR" / "CEO's Office" roles (~120 in the Growth-Desk sheet) landed RED
+even when the JD clearly showed growth/revenue/GM scope. Only CoS-titled roles got a
+description-based scope check. Fix (`xiryn_kit/relevance_match.py` + `preflight_check.py`):
+- added `GENERIC_EXEC_TITLE` regex + `STRONG_SCOPE_KW` list — read function scope from the JD for generic exec titles, mirroring the CoS standard exactly.
+- added `founder`/`ceo`/`eir` to `SENIOR_KW` (preflight) + CEO/leadership to `has_leadership`.
+- added a junior guard so `Associate`/`Intern`-Founder's-Office titles stay RED (do NOT slip GREEN via the new scope path).
+- **Verified:** FO+Growth JD → GREEN 73; CoS → GREEN 88; juniors stay RED. Worker imports the `xiryn_kit/` copy (root-level shadows are stale/unused).
+
+## R48 — Sheet/dashboard freshness gate before applying (2026-10-28)
+The "Growth Desk" Founder's Office/CoS/EIR dashboard sheet (519 jobs, 17 date sections 1–18 Sep)
+is ENTIRELY STALE by Oct 28 (all postings 40–55 days old) — applying directly has near-zero
+conversion. Its linked "Daily Tracker" is a PAID ₹699/month Topmate subscription explicitly
+best-fit for **1–5 yrs / execution-heavy / fresher** roles — junior-targeted, NOT senior
+(11-yr Director/Head/FO/CoS profile, 45 LPA). Rule: for any externally-maintained dashboard,
+check (a) posting-date freshness AND (b) target seniority band BEFORE treating as an apply lane.
+Genuinely fresh/free/senior sources (Gmail same-day alerts, know-your-profile board hunts) are
+preferable to stale or junior-paid dashboards.
+
+
+---
+
+## R49 — Pivot: application-volume → conversion + outreach (2026-10-28)
+Conversion audit of 1,777 applications found 1,663 (93%) fired-and-forgotten, **0** tracked
+to an interview/offer/response, and **60 mined recruiter/TA contacts never contacted** — the
+system had no closed loop. ADR-001 (docs/adr/001-pivot-from-volume-to-conversion-and-outreach.md)
+adopts conversion + warm outreach as the primary metric: add a response/interview/offer
+tracker, activate the 60-contact outreach list, follow-up on 3/7/14-day no-replies, and dial
+DOWN unattended blind EA volume. Senior-relevant gate (R47) stays; every apply now tracks to
+an outcome instead of fired-and-forgotten. SUPERSEDES the "more applications = progress"
+operating model.
+
